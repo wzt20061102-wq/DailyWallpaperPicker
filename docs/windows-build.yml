@@ -1,0 +1,22 @@
+name: Windows build and offline tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: pwsh
+        run: ./scripts/Build.ps1
+      - name: Offline regression tests
+        shell: pwsh
+        run: ./scripts/Test.ps1
+      - name: Portable scripts tests
+        shell: pwsh
+        run: ./scripts/Test-PortableScripts.ps1

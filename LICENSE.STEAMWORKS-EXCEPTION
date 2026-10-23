@@ -1,0 +1,23 @@
+DailyWallpaperPicker Steamworks linking exception
+
+Additional permission under GNU GPL version 3 section 7
+
+Copyright (C) 2026 wzt20061102-wq
+
+As an additional permission under section 7 of the GNU General Public License,
+version 3 (GPLv3), the copyright holder grants you permission to link or combine
+this program with Valve's proprietary Steamworks runtime libraries, including
+steam_api64.dll and the Steam client libraries it uses, solely to interoperate
+with a user's lawfully obtained Steam and Wallpaper Engine installation, and
+to convey the resulting work.
+
+All GPLv3 requirements continue to apply to the covered program and its
+modifications, including the requirement to provide Corresponding Source when
+conveying covered object code. This additional permission does not authorize
+redistribution of Valve's libraries or of Wallpaper Engine, does not change
+their licenses, and does not authorize linking this program with any other
+nonfree library that is not otherwise permitted by GPLv3.
+
+You may extend this permission to your modifications, but are not required to
+do so. If you do not wish to do so, delete this exception statement and the
+references to it from your modified version.

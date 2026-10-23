@@ -1,0 +1,15 @@
+/artifacts/
+/bin/
+/data/
+**/data/
+**/obj/
+*.user
+*.suo
+*.log
+runtime_output.txt
+fatal-error.txt
+*.zip
+*.exe
+*.dll
+*.pdb
+*.previous
