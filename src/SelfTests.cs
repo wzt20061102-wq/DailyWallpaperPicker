@@ -268,6 +268,9 @@ namespace DailyWallpaperPicker
             ControllerTests(results, fixtureRoot);
             HoverPreviewTests(results, fixtureRoot);
             ThumbnailTests(results, fixtureRoot);
+            RecommendationPreferenceTests(results, fixtureRoot);
+            RecommendationFeedbackTests(results, fixtureRoot);
+            DislikeControllerTests(results, fixtureRoot);
 
             Check(results, "readback_scene_package_equivalence_is_directory_and_type_scoped", delegate
             {
@@ -469,6 +472,425 @@ namespace DailyWallpaperPicker
                 object ftp = ThumbnailFailureCase(fixtureRoot, "thumbnail-ftp-url", "ftp://example.invalid/cover", TimeSpan.FromSeconds(1), "仅支持 HTTP 或 HTTPS");
                 Require(CacheStore.Hash(local) == before, "file URL 夹具被修改。");
                 return new { fileRejected = file, ftpRejected = ftp, localSentinelUnchanged = true };
+            });
+        }
+
+        private static void RecommendationPreferenceTests(List<TestResult> results, string fixtureRoot)
+        {
+            Check(results, "preferences_empty_and_json_null_fields_are_safe", delegate
+            {
+                var empty = new RecommendationPreferences();
+                Require(empty.ExcludedIds.Length == 0 && empty.ExcludedTags.Length == 0 && empty.ExcludedTitleKeywords.Length == 0, "默认规则不应预设任何风格。");
+                Require(empty.Allows(new Candidate { Id = null, Title = null, Tags = null }), "空规则不应拒绝仅缺少可选元数据的候选。");
+                Require(!empty.Allows(null), "空候选不应被视作可推荐项目。");
+                var nullable = Json.Decode<RecommendationPreferences>("{\"ExcludedIds\":null,\"ExcludedTags\":null,\"ExcludedTitleKeywords\":null}");
+                Require(nullable.Allows(new Candidate { Title = "宇宙", Tags = null }), "JSON 中 null 数组没有按空规则处理。");
+                var blank = new RecommendationPreferences { ExcludedIds = new[] { null, "", "  " }, ExcludedTags = new[] { null, " " }, ExcludedTitleKeywords = new[] { null, "", "_ -- \t" } };
+                Require(blank.Allows(new Candidate { Id = "880001", Title = "Anime Girls", Tags = new[] { "Anime", "Girls" } }), "空白规则不应匹配所有候选。");
+                Require(Json.Decode<RecommendationPreferences>("{}").Allows(new Candidate { Title = "星空" }), "缺省字段未保留空规则默认值。");
+                return new { emptyDefaults = true, nullArraysAccepted = true, blankRulesIgnored = true, nullCandidateRejected = true };
+            });
+            Check(results, "preferences_excluded_id_matches_only_that_exact_item", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedIds = new[] { "880001" } };
+                Require(!preferences.Allows(new Candidate { Id = "880001", Title = "任何标题" }), "明确排除的 ID 没有被屏蔽。");
+                foreach (string id in new[] { "8800010", "0880001", "880002", null })
+                    Require(preferences.Allows(new Candidate { Id = id, Title = "宇宙" }), "ID 子串或数字转换误伤了其他项目。");
+                return new { excludedIds = 1, similarIdsRetained = 4, exactStringMatch = true };
+            });
+            Check(results, "preferences_tags_use_case_insensitive_whole_tag_matching", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedTags = new[] { "People", "Celebrity" } };
+                Require(!preferences.Allows(new Candidate { Tags = new[] { "Everyone", "pEoPlE", "Scene" } }), "标签大小写变化绕过了排除。");
+                Require(!preferences.Allows(new Candidate { Tags = new[] { null, " CELEBRITY " } }), "含空标签或首尾空白的排除失效。");
+                Require(preferences.Allows(new Candidate { Title = "People collage", Tags = new[] { "People art", "Peoplescape" } }), "整标签规则错误地匹配了标签子串或标题。");
+                Require(preferences.Allows(new Candidate { Title = "Anime Girls", Tags = new[] { "Anime", "Girls", "Everyone" } }), "真人标签排除误伤了未明确排除的动漫标签。");
+                return new { caseInsensitive = true, wholeTagsOnly = true, animeGirlsRetained = true };
+            });
+            Check(results, "preferences_english_keywords_respect_word_boundaries", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedTitleKeywords = new[] { "pink", "people" } };
+                foreach (string title in new[] { "PINK wallpaper", "a pink-sky", "people collage", "(People)" })
+                    Require(!preferences.Allows(new Candidate { Title = title }), "独立英文关键词没有匹配：" + title);
+                foreach (string title in new[] { "Pinkerton landscape", "Pinkish clouds", "Peoplehood", "Pink2", "Cosmic universe" })
+                    Require(preferences.Allows(new Candidate { Title = title }), "英文关键词误伤了词的一部分：" + title);
+                var literal = new RecommendationPreferences { ExcludedTitleKeywords = new[] { "C++" } };
+                Require(!literal.Allows(new Candidate { Title = "C++ code wallpaper" }) && literal.Allows(new Candidate { Title = "CCC code wallpaper" }), "关键词被当作正则表达式执行。");
+                return new { excludedWholeWords = 4, similarWordsRetained = 5, regexCharactersAreLiteral = true };
+            });
+            Check(results, "preferences_hello_kitty_normalizes_case_and_separators", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedTitleKeywords = new[] { "Hello Kitty", "HelloKitty" } };
+                foreach (string title in new[] { "Hello_Kitty collage", "HELLO KITTY", "hello-kitty", "Hello—Kitty", "Hello  \t Kitty wallpaper", "HELLOKITTY" })
+                    Require(!preferences.Allows(new Candidate { Title = title }), "Hello Kitty 标题变体没有匹配：" + title);
+                Require(preferences.Allows(new Candidate { Title = "Hello Kittyland" }), "多词短语误伤了更长的英文名称。");
+                Require(preferences.Allows(new Candidate { Title = "Hello universe" }), "完整短语规则错误地排除了单个 Hello。");
+                return new { excludedTitleVariants = 6, unrelatedPhrasesRetained = 2 };
+            });
+            Check(results, "preferences_cjk_substrings_preserve_unrelated_anime_and_space", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedTitleKeywords = new[] { "粉色", "真人明星", "人物拼贴" }, ExcludedTags = new[] { "People", "Celebrity" } };
+                foreach (string title in new[] { "梦幻粉色桌面", "最新真人明星主题", "高清人物拼贴合集" })
+                    Require(!preferences.Allows(new Candidate { Title = title }), "连续中文标题未命中明确关键词：" + title);
+                foreach (string title in new[] { "Anime Girls", "宇宙星空", "抽象艺术", "山间湖泊" })
+                    Require(preferences.Allows(new Candidate { Title = title, Tags = new[] { "Everyone", "Scene", "Anime", "Girls" } }), "排除规则扩大到了未确认的风格：" + title);
+                return new { excludedCjkTitles = 3, unrelatedStylesRetained = 4, noGenderInference = true };
+            });
+            Check(results, "preferences_exclusions_apply_to_all_recommendation_pools", delegate
+            {
+                var preferences = new RecommendationPreferences { ExcludedIds = new[] { "880001" }, ExcludedTags = new[] { "People" }, ExcludedTitleKeywords = new[] { "pink", "Hello Kitty" } };
+                foreach (string pool in new[] { "popular", "newest", "classic", null })
+                {
+                    Require(!preferences.Allows(new Candidate { Pool = pool, Id = "880001", Title = "宇宙" }), "推荐池绕过了明确 ID 排除。");
+                    Require(!preferences.Allows(new Candidate { Pool = pool, Id = "880002", Title = "Real portrait", Tags = new[] { "people" } }), "推荐池绕过了标签排除。");
+                    Require(!preferences.Allows(new Candidate { Pool = pool, Id = "880003", Title = "Hello_Kitty pink collage" }), "推荐池绕过了标题排除。");
+                    Require(preferences.Allows(new Candidate { Pool = pool, Id = "880004", Title = "宇宙 · Anime Girls", Tags = new[] { "Anime", "Girls" } }), "推荐池过滤误伤未排除候选。");
+                }
+                return new { testedPoolsIncludingUnknown = 4, assertions = 16, explorationPoolAlsoHonorsExclusions = true };
+            });
+            Check(results, "preferences_missing_file_defaults_and_changes_reload", delegate
+            {
+                string directory = Path.Combine(fixtureRoot, "preferences-reload"); Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "preferences.json");
+                var kitty = new Candidate { Id = "880001", Title = "HELLO_KITTY" };
+                var pink = new Candidate { Id = "880002", Title = "Pink sky" };
+                Require(PickerController.ReadPreferences(directory).Allows(kitty), "不存在偏好文件时没有按空规则处理。");
+                Require(!File.Exists(path), "只读缺省偏好不应生成文件。");
+                Json.Write(path, new RecommendationPreferences { ExcludedTitleKeywords = new[] { "hello kitty" } });
+                var first = PickerController.ReadPreferences(directory);
+                Require(!first.Allows(kitty) && first.Allows(pink), "首次规则文件没有正确读取。");
+                Json.Write(path, new RecommendationPreferences { ExcludedTitleKeywords = new[] { "pink" } });
+                var second = PickerController.ReadPreferences(directory);
+                Require(second.Allows(kitty) && !second.Allows(pink), "更新后的偏好没有重新加载。");
+                Require(!first.Allows(kitty) && first.Allows(pink), "重新读取修改了旧批次的规则快照。");
+                return new { missingFileMeansNoExclusions = true, readingDoesNotWrite = true, updatedRulesReloaded = true, previousSnapshotUnchanged = true };
+            });
+            Check(results, "preferences_invalid_files_never_silently_allow_all", delegate
+            {
+                string directory = Path.Combine(fixtureRoot, "preferences-invalid"); Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "preferences.json");
+                var rejected = new List<string>();
+                foreach (string contents in new[] { "null", "{broken-json", "{\"ExcludedTags\":123}", new string(' ', 64 * 1024 + 1) })
+                {
+                    File.WriteAllText(path, contents, new UTF8Encoding(false));
+                    bool failed = false;
+                    try { PickerController.ReadPreferences(directory); }
+                    catch (IOException ex) { rejected.Add(ex.GetType().Name); failed = true; }
+                    catch (ArgumentException ex) { rejected.Add(ex.GetType().Name); failed = true; }
+                    catch (InvalidOperationException ex) { rejected.Add(ex.GetType().Name); failed = true; }
+                    Require(failed, "损坏、错误类型或超限偏好被退化为空规则放行。");
+                    Require(File.ReadAllText(path, Encoding.UTF8) == contents, "失败读取修改了用户偏好内容。");
+                }
+                return new { invalidInputsRejected = rejected.Count, exceptionTypes = rejected, invalidFilePreserved = true, noFallbackToEmptyRules = true };
+            });
+            Check(results, "preferences_replacement_retains_first_and_third_objects_and_paths", delegate
+            {
+                var first = new Candidate { Id = "881001", Pool = "popular", Title = "宇宙", Tags = new[] { "Everyone", "Scene" }, FileSize = 100, Ready = true, CachePath = Path.Combine(fixtureRoot, "retain-first"), ProjectPath = Path.Combine(fixtureRoot, "retain-first", "project.json") };
+                var second = new Candidate { Id = "881002", Pool = "newest", Title = "Hello_Kitty", Tags = new[] { "Everyone", "Video" }, FileSize = 100, Ready = true };
+                var third = new Candidate { Id = "881003", Pool = "classic", Title = "Anime Girls", Tags = new[] { "Everyone", "Scene", "Anime", "Girls" }, FileSize = 100, Ready = true, CachePath = Path.Combine(fixtureRoot, "retain-third"), ProjectPath = Path.Combine(fixtureRoot, "retain-third", "project.json") };
+                string firstPath = first.ProjectPath, thirdPath = third.ProjectPath;
+                var preferences = new RecommendationPreferences { ExcludedIds = new[] { second.Id } };
+                var retained = PickerController.RetainAllowedCandidates(new[] { third, second, first }, preferences, 1024);
+                Require(retained.Count == 2 && Object.ReferenceEquals(retained[0], first) && Object.ReferenceEquals(retained[1], third), "排除第二张时重建或替换了第一、第三张对象。");
+                Require(retained[0].ProjectPath == firstPath && retained[1].ProjectPath == thirdPath && retained.All(c => c.Ready), "保留候选的缓存路径或下载状态改变。");
+                Require(retained.Select(c => c.Pool).SequenceEqual(new[] { "popular", "classic" }), "保留候选没有按推荐槽位排序。");
+                Require(!retained.Any(c => c.Id == second.Id), "明确排除的第二张仍被保留。");
+                return new { retainedCount = 2, sameCandidateObjects = true, projectPathsAndReadinessRetained = true, onlyNewestSlotMissing = true };
+            });
+            Check(results, "preferences_retention_deduplicates_ids_and_ignores_invalid_candidates", delegate
+            {
+                var first = new Candidate { Id = "882001", Pool = "popular", Tags = new[] { "Everyone", "Scene" }, FileSize = 100 };
+                var duplicate = new Candidate { Id = first.Id, Pool = "newest", Tags = new[] { "Everyone", "Video" }, FileSize = 100 };
+                var newest = new Candidate { Id = "882002", Pool = "newest", Tags = new[] { "Everyone", "Video" }, FileSize = 100 };
+                var invalid = new Candidate { Id = "882003", Pool = "classic", Tags = new[] { "Everyone", "Scene", "Mature" }, FileSize = 100 };
+                var third = new Candidate { Id = "882004", Pool = "classic", Tags = new[] { "Everyone", "Scene" }, FileSize = 100 };
+                var preferences = new RecommendationPreferences();
+                var retained = PickerController.RetainAllowedCandidates(new[] { invalid, duplicate, null, third, newest, first }, preferences, 1024);
+                Require(retained.Count == 3 && retained.Select(c => c.Id).Distinct().Count() == 3, "保留候选包含重复 ID 或丢失有效槽位。");
+                Require(retained.Select(c => c.Pool).SequenceEqual(new[] { "popular", "newest", "classic" }), "候选没有按照固定槽位排序。");
+                Require(Object.ReferenceEquals(retained[0], first) && Object.ReferenceEquals(retained[1], newest) && Object.ReferenceEquals(retained[2], third), "去重或原有类型限制筛选未选出有效原对象。");
+                Require(PickerController.RetainAllowedCandidates(null, preferences, 1024).Count == 0, "缺省旧候选没有作为空集合处理。");
+                return new { retainedUniqueIds = 3, duplicateIgnored = true, invalidCandidateIgnored = true, nullInputHandled = true };
+            });
+        }
+
+        private static void RecommendationFeedbackTests(List<TestResult> results, string fixtureRoot)
+        {
+            Check(results, "feedback_exact_dislike_is_idempotent_and_copies_first_metadata", delegate
+            {
+                DateTime firstTime = new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Utc);
+                var candidate = new Candidate { Id = "0883001", Tags = new[] { "Anime", "Girls", "Scene", "Everyone" } };
+                var feedback = new RecommendationFeedback();
+                Require(feedback.Record(candidate, firstTime), "首次不喜欢没有新增记录。");
+                string first = Json.Encode(feedback);
+                candidate.Tags[0] = "Technology";
+                Require(Json.Encode(feedback) == first, "反馈持有可被候选对象修改的标签数组。");
+                Require(!feedback.Record(new Candidate { Id = "883001", Tags = new[] { "Technology" } }, firstTime.AddDays(1)), "同一 ID 的重复点击再次训练。");
+                Require(feedback.Dislikes.Count == 1 && Json.Encode(feedback) == first, "重复点击改变了首次时间或标签。");
+                Require(!feedback.Allows(candidate) && !feedback.Allows(new Candidate { Id = "883001" }), "明确不喜欢的 ID 仍允许推荐。");
+                Require(feedback.Allows(new Candidate { Id = "8830010", Tags = new[] { "Anime", "Girls" } }), "ID 前缀或相同题材被永久排除。");
+                feedback.Validate();
+                return new { uniqueRecords = 1, firstTimeAndTagsRetained = true, copiedTagSnapshot = true, onlyExactIdExcluded = true };
+            });
+            Check(results, "feedback_content_topics_lower_rank_without_excluding_similar_items", delegate
+            {
+                var feedback = new RecommendationFeedback();
+                string[] topics = { "Nature", "Anime", "Sci-Fi", "Games", "Girls", "Guys", "Technology", "Abstract" };
+                feedback.Record(new Candidate { Id = "883010", Tags = topics }, DateTime.UtcNow);
+                foreach (string topic in topics)
+                {
+                    var similar = new Candidate { Id = "883011", Tags = new[] { topic } };
+                    Require(feedback.Penalty(similar) == 1 && feedback.Allows(similar), "题材反馈没有作为软降权处理：" + topic);
+                }
+                Require(feedback.Penalty(new Candidate { Id = "883012", Tags = new[] { "Anime", "Girls", "Games" } }) == 1, "同一次不喜欢的多个共同标签被重复累计。");
+                Require(feedback.Penalty(new Candidate { Id = "883013", Tags = new[] { "Sports" } }) == 0, "没有共同题材的壁纸被降权。");
+                Require(feedback.Penalty(new Candidate { Id = "883014", Tags = new[] { "sci fi", "Game" } }) == 1, "常见题材标签别名没有匹配。");
+                return new { testedTopics = topics.Length, weightPerUniqueDislike = 1, similarItemsStillAllowed = true, unrelatedTopicPenalty = 0 };
+            });
+            Check(results, "feedback_rendering_and_audio_metadata_never_train_preferences", delegate
+            {
+                string[] technical = { "Scene", "Video", "Wallpaper", "1920 x 1080", "3840x2160", "Dynamic resolution", "Audio responsive", "Audio", "HDR", "Everyone", "Approved", "4K", "Unspecified" };
+                var feedback = new RecommendationFeedback();
+                feedback.Record(new Candidate { Id = "883020", Tags = technical }, DateTime.UtcNow);
+                Require(feedback.Dislikes[0].Tags.Length == 0, "技术标签写入了题材反馈。");
+                Require(feedback.Penalty(new Candidate { Id = "883021", Tags = technical }) == 0, "共享播放格式或分辨率被降权。");
+                Require(!feedback.Allows(new Candidate { Id = "883020" }), "没有题材标签时漏掉明确 ID 排除。");
+                feedback.Record(new Candidate { Id = "883022", Tags = new[] { "Nature", "Video", "HDR", "Audio responsive" } }, DateTime.UtcNow);
+                Require(feedback.Penalty(new Candidate { Id = "883023", Tags = new[] { "Scene", "HDR", "Everyone" } }) == 0, "混合元数据反馈通过技术标签传播。");
+                Require(feedback.Penalty(new Candidate { Id = "883024", Tags = new[] { "Nature", "Scene", "1920 x 1080" } }) == 1, "同题材但不同技术格式没有软降权。");
+                return new { ignoredMetadataTags = technical.Length, metadataPenalty = 0, crossMediaTopicMatch = true };
+            });
+            Check(results, "feedback_penalty_stays_finite_and_capped", delegate
+            {
+                var feedback = new RecommendationFeedback();
+                for (int index = 0; index < 12; index++) feedback.Record(new Candidate { Id = (884000 + index).ToString(), Tags = new[] { "Anime", "Girls", "Anime" } }, DateTime.UtcNow);
+                var similar = new Candidate { Id = "884100", Tags = new[] { "Anime", "Girls", "Anime" } };
+                double penalty = feedback.Penalty(similar);
+                Require(penalty == 6 && !Double.IsNaN(penalty) && !Double.IsInfinity(penalty), "重复题材反馈超过有限上限。");
+                Require(feedback.Allows(similar), "较多负反馈将相似题材变为硬屏蔽。");
+                var duplicate = new RecommendationFeedback(); duplicate.Record(new Candidate { Id = "884200", Tags = new[] { "Anime" } }, DateTime.UtcNow);
+                duplicate.Dislikes.Add(duplicate.Dislikes[0]);
+                Require(duplicate.Penalty(similar) == 1, "重复记录对象造成重复训练。");
+                return new { independentDislikes = feedback.Dislikes.Count, cappedPenalty = penalty, duplicateIdCountedOnce = true, similarItemStillAllowed = true };
+            });
+            Check(results, "feedback_empty_and_null_inputs_are_safe_and_invalid_record_is_rejected", delegate
+            {
+                var feedback = new RecommendationFeedback { Dislikes = null };
+                var candidate = new Candidate { Id = "885001", Tags = null };
+                Require(feedback.Allows(candidate) && feedback.Penalty(candidate) == 0, "空反馈不应影响正常候选。");
+                Require(!feedback.Allows(null) && feedback.Penalty(null) == 0, "空候选处理不安全。");
+                foreach (string id in new[] { null, "", "0", "../outside", "abc" })
+                {
+                    bool rejected = false;
+                    try { feedback.Record(new Candidate { Id = id }, DateTime.UtcNow); }
+                    catch (ArgumentException) { rejected = true; }
+                    Require(rejected, "无效反馈 ID 被持久化。");
+                }
+                Require(feedback.Record(candidate, new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Unspecified)), "空反馈列表不能初始化为首条记录。");
+                feedback.Validate();
+                Require(feedback.Dislikes.Count == 1 && feedback.Dislikes[0].Tags.Length == 0 && feedback.Dislikes[0].Utc.EndsWith("Z"), "无题材反馈或 UTC 时间保存错误。");
+                return new { emptyFeedbackAllowed = true, invalidIdsRejected = 5, nullCandidateHandled = true, missingTagsCauseNoPenalty = true };
+            });
+            Check(results, "feedback_json_round_trip_preserves_dislikes_and_soft_penalties", delegate
+            {
+                string path = Path.Combine(fixtureRoot, "feedback-round-trip", "feedback.json");
+                var feedback = new RecommendationFeedback();
+                feedback.Record(new Candidate { Id = "886001", Tags = new[] { "Nature", "Scene" } }, new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Utc));
+                feedback.Record(new Candidate { Id = "886002", Tags = new[] { "Games", "Sci-Fi", "Video" } }, new DateTime(2026, 10, 24, 12, 1, 0, DateTimeKind.Utc));
+                Json.Write(path, feedback);
+                var read = Json.Read<RecommendationFeedback>(path); read.Validate();
+                Require(Json.Encode(read) == Json.Encode(feedback), "反馈 JSON 往返改变了记录内容。");
+                Require(!read.Allows(new Candidate { Id = "886001" }) && !read.Allows(new Candidate { Id = "886002" }), "重新读取丢失了明确 ID 排除。");
+                Require(read.Penalty(new Candidate { Id = "886003", Tags = new[] { "Nature", "Games" } }) == 2, "重新读取丢失了独立软反馈权重。");
+                Require(read.Allows(new Candidate { Id = "886003", Tags = new[] { "Nature", "Games" } }), "持久化把相似题材变成了硬屏蔽。");
+                return new { fileWritten = true, recordCount = read.Dislikes.Count, contentSha256 = CacheStore.Hash(path), roundTripUnchanged = true };
+            });
+            Check(results, "feedback_validation_rejects_corrupt_persistent_records", delegate
+            {
+                string time = new DateTime(2026, 10, 24, 12, 0, 0, DateTimeKind.Utc).ToString("o");
+                var good = new DislikeRecord { Id = "887001", Utc = time, Tags = new[] { "Anime" } };
+                var invalid = new[] {
+                    new RecommendationFeedback { Dislikes = null },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { null } },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { good, good } },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { new DislikeRecord { Id = "0", Utc = time } } },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { new DislikeRecord { Id = "887002", Utc = "not-a-date" } } },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { new DislikeRecord { Id = "887003", Utc = time, Tags = null } } },
+                    new RecommendationFeedback { Dislikes = new List<DislikeRecord> { new DislikeRecord { Id = "887004", Utc = time, Tags = new[] { " " } } } }
+                };
+                foreach (var value in invalid)
+                {
+                    string encoded = Json.Encode(value);
+                    string rejection = Rejected(delegate { Json.Decode<RecommendationFeedback>(encoded).Validate(); });
+                    Require(rejection.Length > 0, "损坏反馈没有明确报错。");
+                }
+                return new { invalidSchemasRejected = invalid.Length, noSilentReset = true };
+            });
+        }
+
+        private static AppState DislikeFixtureState(string fixtureRoot, string name, DateTime now)
+        {
+            string root = Path.Combine(fixtureRoot, "controllers", name);
+            var state = new AppState { BatchId = Schedule.Due(now), PreparedBatchId = Schedule.Prepare(now), PresentedBatch = Schedule.Due(now), SeedImported = true };
+            string[] pools = { "popular", "newest", "classic" };
+            for (int index = 0; index < 3; index++)
+            {
+                foreach (bool prepared in new[] { false, true })
+                {
+                    string id = ((prepared ? 891001 : 890001) + index).ToString();
+                    string directory = Path.Combine(root, "cache", id); Directory.CreateDirectory(directory);
+                    string project = Path.Combine(directory, "project.json");
+                    Json.Write(project, new { type = "scene", file = "scene.pkg" });
+                    File.WriteAllBytes(Path.Combine(directory, "scene.pkg"), Encoding.UTF8.GetBytes("OFFLINE DISLIKE FIXTURE ONLY"));
+                    var item = new Candidate { Id = id, Pool = pools[index], Title = "Fixture " + id, Tags = new[] { "Everyone", "Scene", "Nature", "Dynamic resolution" }, FileSize = 100, Ready = true, ProjectPath = project, CachePath = directory };
+                    if (prepared) state.PreparedCandidates.Add(item); else state.Candidates.Add(item);
+                }
+            }
+            return state;
+        }
+
+        private static WorkerReply DislikeQueryFixture()
+        {
+            return new WorkerReply { ok = true, items = new List<Candidate> { new Candidate { Id = "892001", Title = "Replacement fixture", Tags = new[] { "Everyone", "Scene", "Anime", "Dynamic resolution" }, FileSize = 100, CreatedUtc = 100 } } };
+        }
+
+        private static void AssertNoExternalDislikeCalls(PickerController controller)
+        {
+            Require(Directory.GetFiles(Path.Combine(controller.DataDirectory, "jobs")).Length == 0, "不喜欢测试调用了真实 Steam 工作进程。");
+            string log = Path.Combine(controller.DataDirectory, "runtime_output.txt");
+            Require(!File.Exists(log) || !File.ReadAllText(log, Encoding.UTF8).Contains("getWallpaper"), "不喜欢测试触发了桌面壁纸读取。");
+        }
+
+        private static void DislikeControllerTests(List<TestResult> results, string fixtureRoot)
+        {
+            Check(results, "dislike_22_55_replaces_only_current_slot_and_keeps_prefetched_batch", delegate
+            {
+                const string coverBody = "OFFLINE CURRENT BATCH COVER";
+                using (var server = new ThumbnailHttpFixture((stream, token) => WriteHttp(stream, "HTTP/1.1 200 OK\r\nContent-Length: " + coverBody.Length + "\r\nConnection: close\r\n\r\n" + coverBody, token)))
+                {
+                DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
+                string name = "dislike-current-prefetch"; var state = DislikeFixtureState(fixtureRoot, name, now);
+                string prepared = Json.Encode(state.PreparedCandidates), first = Json.Encode(state.Candidates[0]), third = Json.Encode(state.Candidates[2]);
+                int queries = 0, downloads = 0;
+                var controller = FixtureController(fixtureRoot, name, state, delegate { return now; }, (verb, input, progress) =>
+                {
+                    if (verb == "query") { queries++; Require(Convert.ToString(Json.Decode<Dictionary<string, object>>(Json.Encode(input))["pool"]) == "newest", "单卡更换查询了其他推荐池。"); var reply = DislikeQueryFixture(); reply.items[0].PreviewUrl = server.Url; return Task.FromResult(reply); }
+                    downloads++; throw new IOException("MOCK download unavailable; no Steam called");
+                });
+                controller.DislikeAsync("890002").GetAwaiter().GetResult();
+                var after = controller.State;
+                Require(after.BatchId == "2026-10-23" && after.PreparedBatchId == "2026-10-24", "22:55 更换混淆了当前与预取日期。");
+                Require(Json.Encode(after.PreparedCandidates) == prepared, "更换当前卡片覆盖了下一期预取组。");
+                Require(Json.Encode(after.Candidates[0]) == first && Json.Encode(after.Candidates[2]) == third && after.Candidates[1].Id == "892001", "未只替换第二张卡片。");
+                Require(!after.Candidates[1].Ready && after.Candidates[1].Error.Contains("MOCK"), "模拟下载失败没有保留可重试的新候选。");
+                Require(server.RequestSeen && after.Candidates[1].ThumbnailPath != null && File.ReadAllText(after.Candidates[1].ThumbnailPath, Encoding.ASCII) == coverBody, "22:55 手动替换的完整封面被误判为过期批次。");
+                Require(Directory.GetFiles(Path.Combine(controller.DataDirectory, "thumbnails")).Length == 1, "22:55 换卡封面发布后遗留了临时文件。");
+                Require(queries == 1 && downloads == 1 && PickerController.ReadFeedback(controller.DataDirectory).Dislikes.Count == 1, "单次更换重复查询或重复记录反馈。");
+                AssertNoExternalDislikeCalls(controller);
+                return new { queryCalls = queries, mockDownloadCalls = downloads, unchangedNeighborCards = 2, preparedBatchUnchanged = true, currentBatchThumbnailPublished = true, realSteamCalled = false, desktopCalled = false };
+                }
+            });
+            Check(results, "dislike_failed_current_download_retries_before_23_00", delegate
+            {
+                DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
+                string name = "dislike-retry-current"; var state = DislikeFixtureState(fixtureRoot, name, now);
+                string prepared = Json.Encode(state.PreparedCandidates); int queries = 0, downloads = 0;
+                var controller = FixtureController(fixtureRoot, name, state, delegate { return now; }, (verb, input, progress) =>
+                {
+                    if (verb == "query") { queries++; return Task.FromResult(DislikeQueryFixture()); }
+                    downloads++; throw new IOException("MOCK retryable download failure");
+                });
+                controller.DislikeAsync("890002").GetAwaiter().GetResult();
+                // Keep unrelated cache housekeeping outside this injected-worker test.
+                typeof(PickerController).GetField("nextCleanupTry", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(controller, DateTime.MaxValue);
+                controller.RetryAsync().GetAwaiter().GetResult();
+                Require(downloads == 2 && queries == 1, "22:55 重试没有继续下载当前替代卡，或错误地重新选卡。");
+                Require(controller.State.Candidates[1].Id == "892001" && Json.Encode(controller.State.PreparedCandidates) == prepared, "失败重试改变了替代卡或下一期组。");
+                AssertNoExternalDislikeCalls(controller);
+                return new { mockDownloadAttempts = downloads, selectionQueryCount = queries, currentBatchRetryVerified = true, prefetchedBatchUnchanged = true };
+            });
+            Check(results, "dislike_late_query_cannot_overwrite_new_day_candidates", delegate
+            {
+                DateTime now = new DateTime(2026, 10, 24, 14, 59, 59, DateTimeKind.Utc);
+                string name = "dislike-cross-due"; var state = DislikeFixtureState(fixtureRoot, name, now);
+                string nextBatch = Json.Encode(state.PreparedCandidates); int queries = 0, downloads = 0;
+                var response = new TaskCompletionSource<WorkerReply>();
+                var controller = FixtureController(fixtureRoot, name, state, delegate { return now; }, (verb, input, progress) =>
+                {
+                    if (verb == "query") { queries++; return response.Task; }
+                    downloads++; throw new IOException("Unexpected mock download after due boundary");
+                });
+                Task operation = controller.DislikeAsync("890002");
+                Require(queries == 1 && !operation.IsCompleted, "跨日夹具没有实际停在查询等待中。");
+                now = new DateTime(2026, 10, 24, 15, 0, 0, DateTimeKind.Utc);
+                Require(controller.ShouldPresent(), "23:00 未提升已准备的新一期。");
+                response.SetResult(DislikeQueryFixture()); operation.GetAwaiter().GetResult();
+                Require(controller.State.BatchId == "2026-10-24" && Json.Encode(controller.State.Candidates) == nextBatch, "旧批次查询覆盖了新一期卡片。");
+                Require(downloads == 0 && !controller.State.Candidates.Any(c => c.Id == "892001"), "过期查询仍触发下载或写入新卡片。");
+                Require(PickerController.ReadFeedback(controller.DataDirectory).Dislikes.Count == 1, "跨日取消错误地丢失或重复了已经保存的明确反馈。");
+                AssertNoExternalDislikeCalls(controller);
+                return new { staleQueryDiscarded = true, newBatchUnchanged = true, staleDownloadCalls = downloads, recordedDislikes = 1 };
+            });
+            Check(results, "dislike_duplicate_click_records_once_and_does_not_repeat_query", delegate
+            {
+                DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
+                string name = "dislike-double-click"; var state = DislikeFixtureState(fixtureRoot, name, now);
+                int queries = 0; var response = new TaskCompletionSource<WorkerReply>();
+                var controller = FixtureController(fixtureRoot, name, state, delegate { return now; }, (verb, input, progress) =>
+                {
+                    if (verb == "query") { queries++; return response.Task; }
+                    throw new IOException("MOCK download unavailable");
+                });
+                Task first = controller.DislikeAsync("890002");
+                string concurrent = RejectedOperation(delegate { controller.DislikeAsync("890002").GetAwaiter().GetResult(); });
+                response.SetResult(DislikeQueryFixture()); first.GetAwaiter().GetResult();
+                string stale = Rejected(delegate { controller.DislikeAsync("890002").GetAwaiter().GetResult(); });
+                Require(queries == 1 && PickerController.ReadFeedback(controller.DataDirectory).Dislikes.Count == 1, "重复点击追加了查询或反馈训练。");
+                AssertNoExternalDislikeCalls(controller);
+                return new { queryCalls = queries, feedbackRecords = 1, concurrentRejection = concurrent, oldCardRejection = stale };
+            });
+            Check(results, "dislike_feedback_write_failure_preserves_all_cards", delegate
+            {
+                DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
+                string name = "dislike-write-failure"; var state = DislikeFixtureState(fixtureRoot, name, now);
+                string cards = Json.Encode(state.Candidates), prepared = Json.Encode(state.PreparedCandidates); int workerCalls = 0;
+                var controller = FixtureController(fixtureRoot, name, state, delegate { return now; }, (verb, input, progress) => { workerCalls++; throw new IOException("Worker must not run before feedback persistence"); });
+                Directory.CreateDirectory(Path.Combine(controller.DataDirectory, "feedback.json"));
+                string rejection = Rejected(delegate { controller.DislikeAsync("890002").GetAwaiter().GetResult(); });
+                Require(workerCalls == 0 && Json.Encode(controller.State.Candidates) == cards && Json.Encode(controller.State.PreparedCandidates) == prepared, "反馈写入失败后仍查询或替换了候选。");
+                Require(controller.State.Message.Contains("未能记录不喜欢"), "反馈保存失败被错误显示为已记住。");
+                AssertNoExternalDislikeCalls(controller);
+                return new { writeFailureSurfaced = true, workerCalls = workerCalls, allCardsUnchanged = true, rejection = rejection };
+            });
+            Check(results, "dislike_ranking_penalty_affects_all_pools_but_not_technical_tags", delegate
+            {
+                DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
+                var controller = FixtureController(fixtureRoot, "dislike-ranking", new AppState { SeedImported = true }, delegate { return now; }, (verb, input, progress) => { throw new IOException("Ranking must not call Steam"); });
+                var nature = new Candidate { Id = "893001", Title = "Nature", Tags = new[] { "Nature", "Scene", "HDR", "Dynamic resolution" }, CreatedUtc = 200 };
+                var anime = new Candidate { Id = "893002", Title = "Anime", Tags = new[] { "Anime", "Video", "Dynamic resolution" }, CreatedUtc = 100 };
+                var feedback = new RecommendationFeedback(); feedback.Record(new Candidate { Id = "893100", Tags = new[] { "Nature", "Scene" } }, now);
+                var technical = new RecommendationFeedback(); technical.Record(new Candidate { Id = "893101", Tags = new[] { "Scene", "HDR", "Dynamic resolution" } }, now);
+                foreach (string pool in new[] { "popular", "newest", "classic" })
+                {
+                    Require(Object.ReferenceEquals(controller.ChooseRecommendation(new List<Candidate> { nature, anime }, pool, feedback), anime), "推荐池没有降低相似题材权重：" + pool);
+                    Require(Object.ReferenceEquals(controller.ChooseRecommendation(new List<Candidate> { nature, anime }, pool, technical), nature), "推荐池因技术标签改变原有排序：" + pool);
+                }
+                AssertNoExternalDislikeCalls(controller);
+                return new { poolsChecked = 3, topicPenaltyChangesRank = true, technicalTagsDoNotChangeRank = true };
+            });
+            Check(results, "dislike_feedback_reader_defaults_only_when_missing_and_rejects_corruption", delegate
+            {
+                string directory = Path.Combine(fixtureRoot, "feedback-reader"); Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "feedback.json");
+                Require(PickerController.ReadFeedback(directory).Dislikes.Count == 0 && !File.Exists(path), "旧数据无反馈文件时没有返回空记录。");
+                int rejected = 0;
+                foreach (string contents in new[] { "null", "{\"Dislikes\":null}", "{\"Dislikes\":[null]}" })
+                {
+                    File.WriteAllText(path, contents, new UTF8Encoding(false));
+                    Rejected(delegate { PickerController.ReadFeedback(directory); }); rejected++;
+                    Require(File.ReadAllText(path, Encoding.UTF8) == contents, "损坏反馈被静默覆盖。");
+                }
+                return new { missingFileDefaultsToEmpty = true, corruptFilesRejected = rejected, corruptContentsPreserved = true };
             });
         }
 
@@ -970,11 +1392,16 @@ namespace DailyWallpaperPicker
 
         private static PickerController FixtureController(string fixtureRoot, string name, AppState state, Func<DateTime> clock)
         {
+            return FixtureController(fixtureRoot, name, state, clock, null);
+        }
+
+        private static PickerController FixtureController(string fixtureRoot, string name, AppState state, Func<DateTime> clock, Func<string, object, Action<WorkerProgress>, Task<WorkerReply>> workerCall)
+        {
             string root = Path.Combine(fixtureRoot, "controllers", name);
             Directory.CreateDirectory(root);
             Json.Write(Path.Combine(root, "config.json"), new PickerConfig { WallpaperExe = Path.Combine(root, "not-a-real-wallpaper-engine.exe"), SteamBin = Path.Combine(root, "not-a-real-steam-bin"), MaxSizeMB = 300, RetainCount = 10 });
             Json.Write(Path.Combine(root, "state.json"), state);
-            return new PickerController(root, clock);
+            return new PickerController(root, clock, workerCall);
         }
 
         private static void InvokeUpdate(PickerController controller, string batch, string id, Action<Candidate> update)

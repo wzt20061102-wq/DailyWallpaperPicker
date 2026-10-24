@@ -28,7 +28,7 @@ namespace DailyWallpaperPicker {
   public void Dispose(){if(Interlocked.Exchange(ref disposed,1)!=0)return;var callback=Interlocked.Exchange(ref release,null);if(callback!=null)callback(this);}
  }
  public class PickerController {
-  readonly object sync=new object();readonly SemaphoreSlim cleanupGate=new SemaphoreSlim(1,1);readonly string data,statePath,cache;
+  readonly object sync=new object();readonly SemaphoreSlim cleanupGate=new SemaphoreSlim(1,1);readonly SemaphoreSlim recommendationGate=new SemaphoreSlim(1,1);readonly string data,statePath,cache;
   readonly HashSet<HoverPreviewLease> hoverLeases=new HashSet<HoverPreviewLease>();
   // These parsed entries are process-local; disk metadata must match before every reuse.
   sealed class HoverVerifiedEntry {public string Fingerprint;public string Project;public string Media;public bool Video;}
@@ -40,14 +40,17 @@ namespace DailyWallpaperPicker {
   [DllImport("kernel32.dll",SetLastError=true)]static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,int infoClass,out HoverBasicInfo info,uint size);
   [DllImport("kernel32.dll",SetLastError=true)]static extern bool GetFileInformationByHandle(SafeFileHandle handle,out HoverFileIdentity info);
   readonly PickerConfig config;readonly SteamClient steam;readonly WallpaperBridge wallpaper;readonly Func<DateTime> clock;
+  readonly Func<string,object,Action<WorkerProgress>,Task<WorkerReply>> callSteam;
+  bool disliking;
   AppState state;bool preparing;bool acting;bool cleaning;bool cleanupPending;string activeCache;int previewEpoch;DateTime nextTry=DateTime.MinValue;DateTime nextCleanupTry=DateTime.MinValue;
   public event Action Changed;
-  public bool Busy {get{lock(sync)return acting;}}
+  public bool Busy {get{lock(sync)return acting||disliking;}}
   public AppState State {get{lock(sync)return Json.Decode<AppState>(Json.Encode(state));}}
   public string DataDirectory {get{return data;}}
   DateTime UtcNow {get{return clock();}}
   public PickerController(string dataDirectory):this(dataDirectory,()=>DateTime.UtcNow){}
-  internal PickerController(string dataDirectory,Func<DateTime> utcClock){
+  internal PickerController(string dataDirectory,Func<DateTime> utcClock):this(dataDirectory,utcClock,null){}
+  internal PickerController(string dataDirectory,Func<DateTime> utcClock,Func<string,object,Action<WorkerProgress>,Task<WorkerReply>> workerCall){
    if(utcClock==null)throw new ArgumentNullException("utcClock");clock=utcClock;
    data=Path.GetFullPath(dataDirectory);Directory.CreateDirectory(data);cache=Path.Combine(data,"cache");Directory.CreateDirectory(cache);statePath=Path.Combine(data,"state.json");
    ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
@@ -57,7 +60,7 @@ namespace DailyWallpaperPicker {
    if(state.PreparedCandidates==null)state.PreparedCandidates=new List<Candidate>();
    if(state.SeedTags==null)state.SeedTags=new Dictionary<string,double>();
    if(state.PreparedBatchId==state.BatchId&&state.Candidates.Count==3)state.PreparedCandidates=state.Candidates;
-   steam=new SteamClient(config,data);wallpaper=new WallpaperBridge(config.WallpaperExe,Log);
+   steam=new SteamClient(config,data);callSteam=workerCall??steam.Call;wallpaper=new WallpaperBridge(config.WallpaperExe,Log);
   }
   static PickerConfig Discover(){
    var dirs=new List<string>();using(var k=Registry.CurrentUser.OpenSubKey("Software\\Valve\\Steam")){if(k!=null){string s=Convert.ToString(k.GetValue("SteamPath"));if(!String.IsNullOrEmpty(s)){dirs.Add(s);string v=Path.Combine(s,"steamapps","libraryfolders.vdf");if(File.Exists(v))foreach(Match m in Regex.Matches(File.ReadAllText(v),"\"path\"\\s+\"([^\"]+)\""))dirs.Add(m.Groups[1].Value.Replace("\\\\","\\"));}}}
@@ -73,17 +76,39 @@ namespace DailyWallpaperPicker {
   public bool ShouldPresent(){lock(sync){if(state.Paused)return false;PromoteIfDue();string due=Schedule.Due(UtcNow);if(state.BatchId!=due||state.PresentedBatch==due)return false;state.PresentedBatch=due;Save();return true;}}
   public async Task TickAsync(){
    await RetryCleanupIfDue().ConfigureAwait(false);
-   string target=Schedule.Prepare(UtcNow);
-   lock(sync){if(state.Paused)return;PromoteIfDue();if(preparing||UtcNow<nextTry)return;
-    if(state.PreparedBatchId==target&&state.PreparedCandidates.Count==3&&state.PreparedCandidates.All(x=>x.Ready&&File.Exists(x.ProjectPath)))return;
-    if(state.BatchId==target&&state.Candidates.Count==3&&state.Candidates.All(x=>x.Ready&&File.Exists(x.ProjectPath)))return;
-    preparing=true;
+   if(!await recommendationGate.WaitAsync(0).ConfigureAwait(false))return;
+   string target=Schedule.Prepare(UtcNow);bool started=false;
+   try{
+    lock(sync){if(state.Paused)return;PromoteIfDue();if(preparing||acting||disliking||UtcNow<nextTry)return;preparing=true;started=true;}
+    nextTry=DateTime.MinValue;var preferences=ReadPreferences(data);var feedback=ReadFeedback(data);
+    string due=Schedule.Due(UtcNow);bool repairCurrent;
+    lock(sync)repairCurrent=due!=target&&state.BatchId==due&&(state.Candidates.Count!=3||state.Candidates.Any(c=>!c.Ready||!File.Exists(c.ProjectPath)||!preferences.Allows(c)||!feedback.Allows(c)));
+    if(repairCurrent)await PrepareBatch(due,preferences,feedback,true).ConfigureAwait(false);
+    lock(sync){var existing=ForBatch(target);if(existing!=null&&existing.Count==3&&existing.All(x=>x.Ready&&File.Exists(x.ProjectPath)&&preferences.Allows(x)&&feedback.Allows(x)))return;}
+    await PrepareBatch(target,preferences,feedback,false).ConfigureAwait(false);
    }
-   try{nextTry=DateTime.MinValue;await PrepareBatch(target).ConfigureAwait(false);}
    catch(Exception ex){LogSafely("PREPARE ERROR "+ex);lock(sync){if(target==Schedule.Prepare(UtcNow)&&!state.Paused){state.Message="准备暂未完成："+Friendly(ex)+"；当前壁纸保持不变。";Save();}}nextTry=UtcNow.AddMinutes(5);Notify();}
-   finally{lock(sync){preparing=false;PromoteIfDue();}Notify();}
+   finally{try{if(started){lock(sync){preparing=false;PromoteIfDue();}Notify();}}finally{recommendationGate.Release();}}
   }
   public async Task RetryAsync(){nextTry=DateTime.MinValue;await TickAsync();}
+  public async Task DislikeAsync(string itemId){
+   string batch;bool recorded=false;
+   lock(sync){if(acting||disliking)throw new InvalidOperationException("正在处理上一张壁纸，请稍等。");batch=state.BatchId;if(batch!=Schedule.Due(UtcNow)||!state.Candidates.Any(c=>c.Id==itemId))throw new IOException("候选已更新，请重新选择。");disliking=true;}
+   Notify();await recommendationGate.WaitAsync().ConfigureAwait(false);
+   try{
+    Candidate candidate;lock(sync){if(batch!=state.BatchId||batch!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");candidate=state.Candidates.FirstOrDefault(c=>c.Id==itemId);if(candidate==null)throw new IOException("这张候选已更新，请重新选择。");}
+    var preferences=ReadPreferences(data);var feedback=ReadFeedback(data);
+    if(feedback.Record(candidate,UtcNow))Json.Write(Path.Combine(data,"feedback.json"),feedback);
+    recorded=true;LogSafely("DISLIKE batch="+batch+" id="+itemId);
+    lock(sync){if(batch==state.BatchId){state.Message="已记住不喜欢，正在换一张…";Save();}}Notify();
+    await PrepareBatch(batch,preferences,feedback,true).ConfigureAwait(false);
+    lock(sync){if(batch==state.BatchId&&batch==Schedule.Due(UtcNow)){state.Message=state.Candidates.All(c=>c.Ready)?"已换一张，今后会减少相似题材的推荐。":"已记住不喜欢，新候选仍在准备；桌面保持不变。";Save();}}
+   }catch(Exception ex){
+    string message=(recorded?"已记住不喜欢，但换一张暂未完成：":"未能记录不喜欢：")+Friendly(ex);
+    lock(sync){if(batch==state.BatchId&&batch==Schedule.Due(UtcNow)){state.Message=message;try{Save();}catch(Exception saveError){LogSafely("STATE SAVE ERROR "+saveError.Message);}}}
+    LogSafely("DISLIKE ERROR id="+itemId+" recorded="+recorded+" "+ex.Message);throw new IOException(message,ex);
+   }finally{lock(sync)disliking=false;recommendationGate.Release();Notify();}
+  }
   static string Friendly(Exception ex){string m=ex.Message??"未知错误";return m.Length>180?m.Substring(0,180):m;}
   void PromoteIfDue(){
    string due=Schedule.Due(UtcNow);bool changed=false;
@@ -97,7 +122,7 @@ namespace DailyWallpaperPicker {
    if(changed){cleanupPending=true;nextCleanupTry=UtcNow;Save();}
   }
   List<Candidate> ForBatch(string id){if(state.BatchId==id)return state.Candidates;if(state.PreparedBatchId==id)return state.PreparedCandidates;return null;}
-  bool IsPreparationCurrent(string batch){lock(sync)return !state.Paused&&batch==Schedule.Prepare(UtcNow);}
+  bool IsPreparationCurrent(string batch,bool currentBatch=false){lock(sync)return currentBatch?batch==state.BatchId&&batch==Schedule.Due(UtcNow):!state.Paused&&batch==Schedule.Prepare(UtcNow);}
   void Update(string batch,string id,Action<Candidate> change){lock(sync){if(batch!=Schedule.Due(UtcNow)&&batch!=Schedule.Prepare(UtcNow))return;var list=ForBatch(batch);if(list==null)return;var c=list.Find(x=>x.Id==id);if(c==null)return;change(c);Save();}Notify();}
   async Task ImportSeeds(){
    lock(sync)if(state.SeedImported)return;
@@ -106,7 +131,7 @@ namespace DailyWallpaperPicker {
    var g=owner==null?null:owner["general"] as Dictionary<string,object>;
    string selected="";if(g!=null){if(g.ContainsKey("wallpaperconfigrecent"))selected+=Json.Encode(g["wallpaperconfigrecent"]);if(g.ContainsKey("wallpaperconfig"))selected+=Json.Encode(g["wallpaperconfig"]);}
    string[] ids=Regex.Matches(selected,@"431960[/\\]+(\d+)").Cast<Match>().Select(x=>x.Groups[1].Value).Distinct().Take(20).ToArray();
-   if(ids.Length>0){var r=await steam.Call("query",new {ids=ids,pool="popular",limit=50},null).ConfigureAwait(false);lock(sync){foreach(var item in r.items??new List<Candidate>())foreach(string tag in RelevantTags(item.Tags)){if(!state.SeedTags.ContainsKey(tag))state.SeedTags[tag]=0;state.SeedTags[tag]+=1;}}}
+   if(ids.Length>0){var r=await callSteam("query",new {ids=ids,pool="popular",limit=50},null).ConfigureAwait(false);lock(sync){foreach(var item in r.items??new List<Candidate>())foreach(string tag in RelevantTags(item.Tags)){if(!state.SeedTags.ContainsKey(tag))state.SeedTags[tag]=0;state.SeedTags[tag]+=1;}}}
    lock(sync){state.SeedImported=true;Save();}Log("Imported local wallpaper preference seed (no account data exported).");
   }
   static IEnumerable<string> RelevantTags(IEnumerable<string> tags){return (tags??new string[0]).Where(t=>!new[]{"Everyone","Scene","Video","Approved","3840 x 2160","1920 x 1080","2560 x 1440"}.Contains(t,StringComparer.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase);}
@@ -117,50 +142,72 @@ namespace DailyWallpaperPicker {
   }
   double Preference(Candidate c){double score=0;foreach(string t in RelevantTags(c.Tags)){double s;if(state.SeedTags.TryGetValue(t,out s))score+=s;foreach(var choice in state.Choices.Take(30))if((choice.Tags??new string[0]).Contains(t,StringComparer.OrdinalIgnoreCase))score+=3;}return score;}
   public static bool Eligible(Candidate c,long max){return c!=null&&!String.IsNullOrEmpty(c.Id)&&c.Id.All(Char.IsDigit)&&c.FileSize>0&&c.FileSize<=max&&(c.Tags??new string[0]).Contains("Everyone",StringComparer.OrdinalIgnoreCase)&&(c.Tags.Contains("Scene",StringComparer.OrdinalIgnoreCase)||c.Tags.Contains("Video",StringComparer.OrdinalIgnoreCase))&&!c.Tags.Any(x=>new[]{"Mature","Questionable","Application","Web","Preset"}.Contains(x,StringComparer.OrdinalIgnoreCase));}
-  async Task PrepareBatch(string batch){
-   if(!IsPreparationCurrent(batch))return;
+  internal static RecommendationPreferences ReadPreferences(string directory){
+   string path=Path.Combine(directory,"preferences.json");if(!File.Exists(path))return new RecommendationPreferences();
+   if(new FileInfo(path).Length>64*1024)throw new IOException("偏好设置文件过大，请检查 preferences.json。");
+   var preferences=Json.Read<RecommendationPreferences>(path);if(preferences==null)throw new IOException("偏好设置为空，请检查 preferences.json。");return preferences;
+  }
+  internal static RecommendationFeedback ReadFeedback(string directory){
+   string path=Path.Combine(directory,"feedback.json");if(!File.Exists(path))return new RecommendationFeedback();
+   if(new FileInfo(path).Length>4*1024*1024)throw new IOException("不喜欢记录文件过大，请检查 feedback.json。");
+   var feedback=Json.Read<RecommendationFeedback>(path);if(feedback==null)throw new IOException("不喜欢记录损坏，请保留 feedback.json 并恢复备份。");feedback.Validate();return feedback;
+  }
+  internal static List<Candidate> RetainAllowedCandidates(IEnumerable<Candidate> previous,RecommendationPreferences preferences,long max){
+   var retained=new List<Candidate>();foreach(string pool in new[]{"popular","newest","classic"}){
+    var item=(previous??Enumerable.Empty<Candidate>()).FirstOrDefault(c=>Eligible(c,max)&&c.Pool==pool&&preferences.Allows(c)&&!retained.Any(x=>x.Id==c.Id));
+    if(item!=null)retained.Add(item);
+   }return retained;
+  }
+  internal Candidate ChooseRecommendation(List<Candidate> eligible,string pool,RecommendationFeedback feedback){
+   if(pool=="newest")return eligible.OrderByDescending(AspectRank).ThenBy(feedback.Penalty).ThenByDescending(x=>x.CreatedUtc).First();
+   lock(sync)return eligible.Select((x,i)=>new{Item=x,Rank=i,Weight=Preference(x)-4*feedback.Penalty(x),Aspect=AspectRank(x)}).OrderByDescending(x=>x.Aspect).ThenByDescending(x=>x.Weight).ThenBy(x=>x.Rank).First().Item;
+  }
+  async Task PrepareBatch(string batch,RecommendationPreferences preferences,RecommendationFeedback feedback,bool currentBatch){
+   if(!IsPreparationCurrent(batch,currentBatch))return;
    await ImportSeeds().ConfigureAwait(false);
-   if(!IsPreparationCurrent(batch))return;
+   if(!IsPreparationCurrent(batch,currentBatch))return;
    List<Candidate> items;lock(sync){items=ForBatch(batch);if(items!=null)items=items.ToList();}
-   if(items==null||items.Count!=3){
+   if(items==null||items.Count!=3||items.Any(c=>!preferences.Allows(c)||!feedback.Allows(c))){
+    var retained=RetainAllowedCandidates(items==null?null:items.Where(feedback.Allows),preferences,(long)config.MaxSizeMB*1024*1024);
     items=new List<Candidate>();foreach(string pool in new[]{"popular","newest","classic"}){
+     var keep=retained.FirstOrDefault(c=>c.Pool==pool);if(keep!=null){items.Add(keep);continue;}
      List<Candidate> eligible=new List<Candidate>();
      for(int page=1;page<=10&&eligible.Count==0;page++){
-      var r=await steam.Call("query",new {pool=pool,limit=50,page=page},null).ConfigureAwait(false);
-      if(!IsPreparationCurrent(batch))return;
-      eligible=(r.items??new List<Candidate>()).Where(c=>Eligible(c,(long)config.MaxSizeMB*1024*1024)&&!items.Any(x=>x.Id==c.Id)).ToList();
+      var r=await callSteam("query",new {pool=pool,limit=50,page=page},null).ConfigureAwait(false);
+      if(!IsPreparationCurrent(batch,currentBatch))return;
+      eligible=(r.items??new List<Candidate>()).Where(c=>Eligible(c,(long)config.MaxSizeMB*1024*1024)&&preferences.Allows(c)&&feedback.Allows(c)&&!items.Any(x=>x.Id==c.Id)&&!retained.Any(x=>x.Id==c.Id)).ToList();
       lock(sync){string oldest=Schedule.Beijing(UtcNow).AddDays(-90).ToString("yyyy-MM-dd");eligible=eligible.Where(c=>!state.Seen.Any(h=>h.Id==c.Id&&String.CompareOrdinal(h.Date,oldest)>=0)&&!state.Choices.Any(h=>h.Id==c.Id)).ToList();}
      }
      if(eligible.Count==0)throw new IOException("暂时没有足够的不重复候选，稍后会重试。");
-     Candidate pick;if(pool=="newest")pick=eligible.OrderByDescending(AspectRank).ThenByDescending(x=>x.CreatedUtc).First();else lock(sync)pick=eligible.Select((x,i)=>new{Item=x,Rank=i,Weight=Preference(x),Aspect=AspectRank(x)}).OrderByDescending(x=>x.Aspect).ThenByDescending(x=>x.Weight).ThenBy(x=>x.Rank).First().Item;
+     Candidate pick=ChooseRecommendation(eligible,pool,feedback);
      pick.Pool=pool;pick.Status="等待下载";pick.Total=pick.FileSize;items.Add(pick);
     }
-    lock(sync){if(!IsPreparationCurrent(batch))return;state.PreparedBatchId=batch;state.PreparedCandidates=items;foreach(var c in items)state.Seen.Add(new Shown{Id=c.Id,Date=batch});state.Seen=state.Seen.Where(x=>String.CompareOrdinal(x.Date,Schedule.Beijing(UtcNow).AddDays(-90).ToString("yyyy-MM-dd"))>=0).ToList();PromoteIfDue();Save();}Notify();
+    lock(sync){if(!IsPreparationCurrent(batch,currentBatch))return;if(acting){nextTry=UtcNow.AddSeconds(15);return;}if(currentBatch){state.Candidates=items;if(state.PreparedBatchId==batch)state.PreparedCandidates=items;}else{state.PreparedBatchId=batch;state.PreparedCandidates=items;}foreach(var c in items)if(!state.Seen.Any(x=>x.Id==c.Id&&x.Date==batch))state.Seen.Add(new Shown{Id=c.Id,Date=batch});state.Seen=state.Seen.Where(x=>String.CompareOrdinal(x.Date,Schedule.Beijing(UtcNow).AddDays(-90).ToString("yyyy-MM-dd"))>=0).ToList();cleanupPending=true;PromoteIfDue();Save();}LogSafely("CANDIDATES prepared batch="+batch+" retained="+retained.Count+" ids="+String.Join(",",items.Select(x=>x.Id)));Notify();
    }
    foreach(var c in items){
-    if(!IsPreparationCurrent(batch))return;if(c.Ready&&File.Exists(c.ProjectPath))continue;
+    if(!IsPreparationCurrent(batch,currentBatch))return;if(c.Ready&&File.Exists(c.ProjectPath))continue;
     try{
-     await Thumbnail(c,batch).ConfigureAwait(false);
-     if(!IsPreparationCurrent(batch))return;
+     await Thumbnail(c,batch,currentBatch).ConfigureAwait(false);
+     if(!IsPreparationCurrent(batch,currentBatch))return;
      string cached=Path.Combine(cache,c.Id);string project;
      project=null;bool corrupt=false;
      if(Directory.Exists(cached)&&File.Exists(Path.Combine(cached,".verified.json")))try{project=await Task.Run(()=>CacheStore.Verify(cached)).ConfigureAwait(false);}catch(IOException){corrupt=true;}
      if(corrupt){
       string current=await wallpaper.GetCurrent().ConfigureAwait(false);
-      if(!IsPreparationCurrent(batch))return;
+      if(!IsPreparationCurrent(batch,currentBatch))return;
       await QuarantineCorruptCacheAsync(cached,c.Id,current).ConfigureAwait(false);
      }
      if(project==null){
       Update(batch,c.Id,x=>{x.Status="正在下载完整壁纸";x.Error=null;});
-      var reply=await steam.Call("download",new{id=c.Id},p=>Update(batch,c.Id,x=>{x.Downloaded=p.downloaded;x.Total=p.total;x.Status="正在下载完整壁纸";})).ConfigureAwait(false);
-      ValidateDownloadReply(reply,c.Id);if(!IsPreparationCurrent(batch))return;
+      var reply=await callSteam("download",new{id=c.Id},p=>Update(batch,c.Id,x=>{x.Downloaded=p.downloaded;x.Total=p.total;x.Status="正在下载完整壁纸";})).ConfigureAwait(false);
+      ValidateDownloadReply(reply,c.Id);if(!IsPreparationCurrent(batch,currentBatch))return;
       Update(batch,c.Id,x=>x.Status="正在校验文件");project=await ImportCacheAsync(reply.installPath,c.Id).ConfigureAwait(false);
      }
-     if(!IsPreparationCurrent(batch))return;
+     if(!IsPreparationCurrent(batch,currentBatch))return;
      Update(batch,c.Id,x=>{x.ProjectPath=project;x.CachePath=Path.GetDirectoryName(project);x.Ready=true;x.Status="已就绪";x.Error=null;x.Downloaded=x.Total;});LogSafely("READY batch="+batch+" id="+c.Id+" "+project);
     }catch(Exception ex){Update(batch,c.Id,x=>{x.Ready=false;x.Status="暂未下载完成";x.Error=Friendly(ex);});LogSafely("CANDIDATE ERROR "+c.Id+" "+ex.Message);}
    }
-   if(!IsPreparationCurrent(batch))return;
+   if(!IsPreparationCurrent(batch,currentBatch))return;
    lock(sync){PromoteIfDue();if(state.BatchId==batch)state.Message=state.Candidates.All(x=>x.Ready)?"三张都已准备好。选一张喜欢的，或保持现在。":"部分壁纸仍待下载，稍后会重试。";Save();}
    if(items.All(x=>x.Ready)){try{await Cleanup().ConfigureAwait(false);}catch(Exception ex){DeferCleanup(ex);}}else nextTry=UtcNow.AddMinutes(5);Notify();
   }
@@ -170,17 +217,17 @@ namespace DailyWallpaperPicker {
    if(reply.subscribedBefore.Value!=reply.subscribedAfter.Value)throw new IOException("Steam 订阅状态发生异常变化，已停止。");
    if(String.IsNullOrWhiteSpace(reply.installPath))throw new IOException("Steam 未返回完整壁纸位置，已停止。");
   }
-  Task Thumbnail(Candidate c,string batch){return Thumbnail(c,batch,TimeSpan.FromSeconds(15));}
+  Task Thumbnail(Candidate c,string batch,bool currentBatch){return Thumbnail(c,batch,TimeSpan.FromSeconds(15),currentBatch);}
   // A cover is optional: failure must not stop the full wallpaper download or
   // leave the daily preparation job waiting indefinitely on an image server.
-  internal async Task Thumbnail(Candidate c,string batch,TimeSpan timeout){
+  internal async Task Thumbnail(Candidate c,string batch,TimeSpan timeout,bool currentBatch=false){
    string temporary=null;
    try{
     if(String.IsNullOrWhiteSpace(c.Id)||!c.Id.All(Char.IsDigit))throw new IOException("无效封面编号。");
     string dir=Path.Combine(data,"thumbnails");Directory.CreateDirectory(dir);string file=Path.Combine(dir,c.Id+".img");
     if(!File.Exists(file)&&!String.IsNullOrEmpty(c.PreviewUrl)){
      byte[] bytes=await DownloadThumbnail(c.PreviewUrl,timeout).ConfigureAwait(false);
-     if(!IsPreparationCurrent(batch))return;
+     if(!IsPreparationCurrent(batch,currentBatch))return;
      temporary=Path.Combine(dir,c.Id+"-"+Guid.NewGuid().ToString("N")+".tmp");
      File.WriteAllBytes(temporary,bytes);
      if(!File.Exists(file))File.Move(temporary,file);
@@ -258,7 +305,7 @@ namespace DailyWallpaperPicker {
    try{
     Candidate candidate;string batch;
     lock(sync){
-     if(acting)throw new InvalidOperationException("正在处理壁纸，请稍后预览。");
+     if(acting||disliking)throw new InvalidOperationException("正在处理壁纸，请稍后预览。");
      if(state.BatchId!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");
      var current=state.Candidates.FirstOrDefault(x=>x.Id==itemId&&x.Ready);if(current==null)throw new IOException("这张壁纸尚未准备好。");
      candidate=Json.Decode<Candidate>(Json.Encode(current));batch=state.BatchId;
@@ -288,7 +335,7 @@ namespace DailyWallpaperPicker {
      return new HoverPreviewLease(candidate.Id,batch,entry.Project,entry.Media,entry.Video,ReleaseHoverPreview);
     }).ConfigureAwait(false);
     lock(sync){
-     if(acting||!HoverCandidateMatches(lease))throw new IOException("候选已更新，本次悬停已取消。");
+     if(acting||disliking||!HoverCandidateMatches(lease))throw new IOException("候选已更新，本次悬停已取消。");
      hoverLeases.Add(lease);
     }
     LogHover("lease-acquired batch="+batch+" id="+itemId+" type="+(lease.IsVideo?"video":"scene")+" gateWaitMs="+gateWaitMs+" totalMs="+elapsed.ElapsedMilliseconds);return lease;
@@ -320,7 +367,7 @@ namespace DailyWallpaperPicker {
   }
   public Task WarmHoverPreviewsAsync(){
    var jobs=new List<Task>();lock(sync){
-    string batch=state.BatchId;if(acting||batch!=Schedule.Due(UtcNow))return Task.FromResult(0);
+    string batch=state.BatchId;if(acting||disliking||batch!=Schedule.Due(UtcNow))return Task.FromResult(0);
     foreach(string key in hoverWarmJobs.Keys.Where(x=>!x.StartsWith(batch+"|",StringComparison.Ordinal)).ToArray())hoverWarmJobs.Remove(key);
     foreach(var candidate in state.Candidates.Where(x=>x.Ready&&(x.Tags??new string[0]).Contains("Video",StringComparer.OrdinalIgnoreCase)&&!(x.Tags??new string[0]).Contains("Scene",StringComparer.OrdinalIgnoreCase))){
      string id=candidate.Id,key=batch+"|"+id+"|"+candidate.ProjectPath;Task job;
@@ -338,10 +385,10 @@ namespace DailyWallpaperPicker {
   bool HoverCandidateMatches(HoverPreviewLease lease){
    return lease.BatchId==state.BatchId&&lease.BatchId==Schedule.Due(UtcNow)&&state.Candidates.Any(x=>x.Id==lease.ItemId&&x.Ready&&SamePath(x.ProjectPath,lease.ProjectPath)&&SamePath(x.CachePath,lease.CachePath));
   }
-  public bool IsHoverPreviewCurrent(HoverPreviewLease lease){lock(sync)return lease!=null&&!lease.IsDisposed&&!acting&&hoverLeases.Contains(lease)&&HoverCandidateMatches(lease);}
+  public bool IsHoverPreviewCurrent(HoverPreviewLease lease){lock(sync)return lease!=null&&!lease.IsDisposed&&!acting&&!disliking&&hoverLeases.Contains(lease)&&HoverCandidateMatches(lease);}
   void ReleaseHoverPreview(HoverPreviewLease lease){lock(sync){if(!hoverLeases.Remove(lease))return;if(!HoverCandidateMatches(lease)){cleanupPending=true;nextCleanupTry=UtcNow;}}LogHover("lease-released batch="+lease.BatchId+" id="+lease.ItemId);}
   public async Task PreviewAsync(string itemId){
-   Candidate c;string batch;int epoch;lock(sync){if(acting)throw new InvalidOperationException("正在处理上一张壁纸，请稍等。");if(state.BatchId!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");c=state.Candidates.FirstOrDefault(x=>x.Id==itemId&&x.Ready);if(c==null)throw new IOException("这张壁纸尚未准备好，请稍后重试。");batch=state.BatchId;acting=true;activeCache=c.CachePath;epoch=previewEpoch;}Notify();
+   Candidate c;string batch;int epoch;lock(sync){if(acting||disliking)throw new InvalidOperationException("正在处理上一张壁纸，请稍等。");if(state.BatchId!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");c=state.Candidates.FirstOrDefault(x=>x.Id==itemId&&x.Ready);if(c==null)throw new IOException("这张壁纸尚未准备好，请稍后重试。");batch=state.BatchId;acting=true;activeCache=c.CachePath;epoch=previewEpoch;}Notify();
    try{
     await VerifyCandidate(c,batch).ConfigureAwait(false);
     lock(sync){if(epoch!=previewEpoch)return;if(batch!=state.BatchId||batch!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");}
@@ -352,7 +399,7 @@ namespace DailyWallpaperPicker {
    finally{lock(sync){acting=false;activeCache=null;}Notify();}
   }
   public async Task ApplyAsync(string itemId){
-   Candidate c;string batch;lock(sync){if(acting)throw new InvalidOperationException("正在处理上一张壁纸，请稍等。");if(state.BatchId!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");c=state.Candidates.FirstOrDefault(x=>x.Id==itemId&&x.Ready);if(c==null)throw new IOException("这张壁纸尚未准备好，请稍后重试。");batch=state.BatchId;acting=true;activeCache=c.CachePath;state.Message="正在切换，请稍等…";}Notify();
+   Candidate c;string batch;lock(sync){if(acting||disliking)throw new InvalidOperationException("正在处理上一张壁纸，请稍等。");if(state.BatchId!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");c=state.Candidates.FirstOrDefault(x=>x.Id==itemId&&x.Ready);if(c==null)throw new IOException("这张壁纸尚未准备好，请稍后重试。");batch=state.BatchId;acting=true;activeCache=c.CachePath;state.Message="正在切换，请稍等…";}Notify();
    try{
     await VerifyCandidate(c,batch).ConfigureAwait(false);
     lock(sync)if(state.BatchId!=batch||batch!=Schedule.Due(UtcNow))throw new IOException("候选已更新，请重新选择。");

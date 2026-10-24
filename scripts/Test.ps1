@@ -17,6 +17,6 @@ $testExit=$process.ExitCode
 $resultFile=Join-Path $output 'tests.json'
 if(-not (Test-Path -LiteralPath $resultFile) -or (Get-Item -LiteralPath $resultFile).LastWriteTimeUtc -lt $started){throw 'Fresh test results missing.'}
 $result=Get-Content -LiteralPath $resultFile -Raw -Encoding UTF8|ConvertFrom-Json
-if($testExit -ne 0 -or $result.status -ne 'passed' -or $result.total -lt 57 -or $result.passed -ne $result.total -or $result.failed -ne 0){throw "Tests failed: exit=$testExit, passed=$($result.passed)/$($result.total). See $resultFile"}
+if($testExit -ne 0 -or $result.status -ne 'passed' -or $result.total -lt 82 -or $result.passed -ne $result.total -or $result.failed -ne 0){throw "Tests failed: exit=$testExit, passed=$($result.passed)/$($result.total). See $resultFile"}
 if($result.safety.realSteamCalled -or $result.safety.desktopCalled -or $result.safety.realUserDirectoriesModified){throw 'Offline test boundary failed.'}
 [pscustomobject]@{status='passed';total=$result.total;failed=$result.failed;exitCode=$testExit;report=$resultFile}

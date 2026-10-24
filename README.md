@@ -44,7 +44,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Disable-Startup.ps1
 | 操作 | 效果 |
 | --- | --- |
 | 鼠标放到 Video 封面 | 预热完成后播放静音小预览；移开即暂停并回到封面 |
-| 鼠标放到 Scene 封面 | 保持静态封面 |
+| 鼠标放到 Scene 封面 | 保持静态封面，不弹出说明气泡；需要动态效果时点击「预览」 |
+| 点击「不喜欢」 | 只替换这张候选，记住反馈并减少相似题材推荐；当前桌面不变 |
 | 点击「预览」 | 打开 Wallpaper Engine 独立预览，默认静音、最大化，可手动还原窗口 |
 | 点击「使用这张」 | 应用所选壁纸，并读取当前壁纸确认结果 |
 | 不选、关闭或下载失败 | 保留当前桌面壁纸 |
@@ -56,6 +57,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Disable-Startup.ps1
 - 每组从近期热门、新发布、历史热门候选中各选一张，优先匹配主屏比例。
 - 初次读取 Wallpaper Engine 本地最近使用记录中的壁纸标签作为偏好线索；之后参考成功选用的壁纸。仅预览、关闭或不选，不算“不喜欢”。
 - 新作保留探索性。推荐历史和偏好保存在本机，90 天内避免重复推荐。
+- 明确点过「不喜欢」的作品不再推荐；相似题材按工坊标签降低排序权重，仍保留探索机会。反馈只存本机，不会发送给作者或 Steam。换图期间显示准备进度，失败时保留已保存的反馈并允许重试。
 - 默认仅选择标记为全年龄的 Scene 或 Video，单张不超过 300 MB。分类依据工坊标签，并非人工审核。
 - 错过时间后，在下次运行时补最近一期，不连续弹出多天的窗口；程序不会唤醒关机或休眠的电脑。
 
@@ -73,11 +75,15 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Disable-Startup.ps1
 | --- | --- |
 | `config.json` | 本机 Wallpaper Engine 路径和缓存设置 |
 | `state.json` | 候选、选择记录与偏好 |
+| `feedback.json` | 点击「不喜欢」产生的作品 ID、时间及题材标签；首次反馈后创建 |
+| `preferences.json` | 可选的本机排除规则，默认没有规则；支持 `ExcludedIds`、`ExcludedTags`、`ExcludedTitleKeywords` 数组 |
 | `cache/` | 校验后的壁纸副本 |
 | `thumbnails/` | 候选封面 |
 | `runtime_output.txt` | 本机运行日志 |
 
 停止使用工具不会自动删除这些数据。若桌面仍使用工具缓存里的壁纸，请先在 Wallpaper Engine 中切换到其他壁纸，再删除缓存。反馈问题时先检查日志，删去用户名、完整路径和不希望公开的壁纸记录。
+
+升级时先从托盘退出程序，再用新版程序和随附文件更新原目录，保留自己的 `data` 目录。若想重置「不喜欢」，先退出程序，再将 `data/feedback.json` 移到目录外备存；下次启动会从空反馈开始。
 
 ## 运行要求
 

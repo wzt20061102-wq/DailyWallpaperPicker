@@ -172,14 +172,14 @@ namespace DailyWallpaperPicker
             var footerActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             _retryButton = MakeButton("重试", "重试今日壁纸", false);
             AutomationProperties.SetAutomationId(_retryButton, "RetryToday");
-            KeyboardNavigation.SetTabIndex(_retryButton, 9);
+            KeyboardNavigation.SetTabIndex(_retryButton, 12);
             _retryButton.MinWidth = 62;
             _retryButton.Margin = new Thickness(0, 0, 8, 0);
             _retryButton.Visibility = Visibility.Collapsed;
             _retryButton.Click += async delegate { await RunAction(_controller.RetryAsync, "正在重新连接，请稍等…"); };
             var laterButton = MakeButton("暂时不选", "暂时不选并收起到托盘", false);
             AutomationProperties.SetAutomationId(laterButton, "HideToTray");
-            KeyboardNavigation.SetTabIndex(laterButton, 10);
+            KeyboardNavigation.SetTabIndex(laterButton, 13);
             laterButton.MinWidth = 94;
             laterButton.Background = Brushes.Transparent;
             laterButton.BorderBrush = Brushes.Transparent;
@@ -1016,7 +1016,9 @@ namespace DailyWallpaperPicker
             private readonly ProgressBar _progress;
             private readonly Button _preview;
             private readonly Button _apply;
+            private readonly Button _dislike;
             private readonly Button _details;
+            private bool _dislikeRunning;
             private string _itemId;
             private string _loadedImagePath;
             private string _projectPath;
@@ -1103,7 +1105,7 @@ namespace DailyWallpaperPicker
                 _details.HorizontalAlignment = HorizontalAlignment.Right;
                 _details.VerticalAlignment = VerticalAlignment.Top;
                 _details.ToolTip = "查看创意工坊详情";
-                KeyboardNavigation.SetTabIndex(_details, index * 3 + 2);
+                KeyboardNavigation.SetTabIndex(_details, index * 4);
                 AutomationProperties.SetAutomationId(_details, "Candidate" + (index + 1).ToString(CultureInfo.InvariantCulture) + "Details");
                 _details.Click += delegate
                 {
@@ -1144,12 +1146,46 @@ namespace DailyWallpaperPicker
                 };
                 content.Children.Add(_title);
                 var actions = new Grid();
+                actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+                actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
                 actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
                 actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
                 actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+                _dislike = MakeButton("不喜欢", "不喜欢候选 " + (index + 1).ToString(CultureInfo.InvariantCulture) + "，换一张", false);
+                AutomationProperties.SetAutomationId(_dislike, "Candidate" + (index + 1).ToString(CultureInfo.InvariantCulture) + "Dislike");
+                AutomationProperties.SetHelpText(_dislike, "只更换这张候选，以后减少相似推荐；桌面保持不变。");
+                KeyboardNavigation.SetTabIndex(_dislike, index * 4 + 1);
+                _dislike.Background = Brushes.Transparent;
+                _dislike.Foreground = MutedBrush;
+                _dislike.Padding = new Thickness(4, 7, 4, 7);
+                _dislike.ToolTip = "换一张，以后少推荐类似的";
+                _dislike.Click += async delegate
+                {
+                    string id = _itemId;
+                    if (String.IsNullOrEmpty(id) || _dislikeRunning || _owner._actionRunning || _owner._controller.Busy) return;
+                    bool restoreFocus = _dislike.IsKeyboardFocusWithin;
+                    _dislikeRunning = true;
+                    _owner.EndHover(this, "dislike");
+                    try { await _owner.RunAction(delegate { return _owner._controller.DislikeAsync(id); }, "正在换一张…"); }
+                    finally
+                    {
+                        _dislikeRunning = false;
+                        if (!_owner._disposed)
+                        {
+                            _owner.Render();
+                            IInputElement focused = Keyboard.FocusedElement;
+                            if (restoreFocus && _owner.IsVisible && _owner.IsActive
+                                && (focused == null || focused == _dislike || focused == _owner))
+                            {
+                                if (!String.Equals(id, _itemId, StringComparison.Ordinal) && _preview.IsEnabled) _preview.Focus();
+                                else if (_dislike.IsEnabled) _dislike.Focus();
+                            }
+                        }
+                    }
+                };
                 _apply = MakeButton("使用这张", "使用候选 " + (index + 1).ToString(CultureInfo.InvariantCulture), true);
                 AutomationProperties.SetAutomationId(_apply, "Candidate" + (index + 1).ToString(CultureInfo.InvariantCulture) + "Use");
-                KeyboardNavigation.SetTabIndex(_apply, index * 3 + 1);
+                KeyboardNavigation.SetTabIndex(_apply, index * 4 + 3);
                 _apply.Padding = new Thickness(6, 7, 6, 7);
                 _apply.Click += async delegate
                 {
@@ -1159,7 +1195,7 @@ namespace DailyWallpaperPicker
                 };
                 _preview = MakeButton("预览", "预览候选 " + (index + 1).ToString(CultureInfo.InvariantCulture), false);
                 AutomationProperties.SetAutomationId(_preview, "Candidate" + (index + 1).ToString(CultureInfo.InvariantCulture) + "Preview");
-                KeyboardNavigation.SetTabIndex(_preview, index * 3);
+                KeyboardNavigation.SetTabIndex(_preview, index * 4 + 2);
                 _preview.Padding = new Thickness(6, 7, 6, 7);
                 _preview.Click += async delegate
                 {
@@ -1167,7 +1203,9 @@ namespace DailyWallpaperPicker
                     if (String.IsNullOrEmpty(id)) return;
                     await _owner.RunAction(delegate { return _owner._controller.PreviewAsync(id); }, "正在打开独立预览，桌面保持不变…");
                 };
-                Grid.SetColumn(_apply, 2);
+                Grid.SetColumn(_preview, 2);
+                Grid.SetColumn(_apply, 4);
+                actions.Children.Add(_dislike);
                 actions.Children.Add(_preview);
                 actions.Children.Add(_apply);
                 content.Children.Add(actions);
@@ -1195,11 +1233,15 @@ namespace DailyWallpaperPicker
                 _title.ToolTip = _title.Text;
                 _apply.IsEnabled = item != null && item.Ready && !busy;
                 _preview.IsEnabled = item != null && item.Ready && !busy;
+                _dislike.IsEnabled = item != null && !String.IsNullOrEmpty(item.Id) && !busy && !_dislikeRunning;
+                _dislike.Content = _dislikeRunning ? "更换中" : "不喜欢";
+                AutomationProperties.SetItemStatus(_dislike, _dislikeRunning ? "正在换一张" : "");
                 _details.IsEnabled = item != null && !String.IsNullOrEmpty(item.Id);
                 if (item != null)
                 {
                     AutomationProperties.SetName(_apply, "使用这张：" + _title.Text);
                     AutomationProperties.SetName(_preview, "预览：" + _title.Text);
+                    AutomationProperties.SetName(_dislike, "不喜欢：" + _title.Text + "，换一张");
                     AutomationProperties.SetName(_details, "创意工坊详情：" + _title.Text);
                 }
                 bool failed = item != null && !String.IsNullOrEmpty(item.Error);
@@ -1235,7 +1277,8 @@ namespace DailyWallpaperPicker
 
             public void SetHoverTip(string text)
             {
-                _previewPanel.ToolTip = text;
+                _previewPanel.ToolTip = null;
+                AutomationProperties.SetHelpText(_previewPanel, text ?? String.Empty);
             }
 
             private void LoadImage(string path)
