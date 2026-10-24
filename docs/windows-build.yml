@@ -11,12 +11,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+      - name: Build standard solution
         shell: pwsh
         run: ./scripts/Build.ps1
-      - name: Offline regression tests
+      - name: Isolated regression tests
         shell: pwsh
         run: ./scripts/Test.ps1
-      - name: Portable scripts tests
+      - name: Installer and startup script tests
         shell: pwsh
         run: ./scripts/Test-PortableScripts.ps1
+      - name: Verify frozen source and portable packages
+        shell: pwsh
+        run: ./scripts/Package.ps1

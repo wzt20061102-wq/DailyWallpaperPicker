@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{8FD395DE-2D77-47CF-B326-D6A157389F88}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>DailyWallpaperPicker</AssemblyName>
+    <RootNamespace>DailyWallpaperPicker</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>picker.ico</ApplicationIcon>
+  </PropertyGroup>
+  <Import Project="..\build\Common.props" />
+  <ItemGroup>
+    <Compile Include="**\*.cs" Exclude="SteamWorker.cs;WallpaperReadback.cs;obj\**\*" />
+    <Reference Include="System.Xaml"><HintPath>$(FrameworkRuntimeDirectory)\System.Xaml.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Drawing"><HintPath>$(FrameworkRuntimeDirectory)\System.Drawing.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(FrameworkRuntimeDirectory)\System.Windows.Forms.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(FrameworkRuntimeDirectory)\WPF\PresentationCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationFramework"><HintPath>$(FrameworkRuntimeDirectory)\WPF\PresentationFramework.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(FrameworkRuntimeDirectory)\WPF\WindowsBase.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

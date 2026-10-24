@@ -65,7 +65,7 @@ try {
     $fixture = Join-Path $scratch 'release fixture'
     New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts') | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $fixture 'docs') | Out-Null
-    $files = @('DailyWallpaperPicker.exe', 'SteamWorker.exe', 'WallpaperReadback.exe', 'Launch.cmd', 'LICENSE', 'LICENSE.STEAMWORKS-EXCEPTION', 'THIRD_PARTY_NOTICES.md')
+    $files = @('DailyWallpaperPicker.exe', 'SteamWorker.exe', 'WallpaperReadback.exe', 'Launch.cmd', 'LICENSE', 'LICENSE.STEAMWORKS-EXCEPTION', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'build-info.json')
     foreach ($file in $files) { Set-Content -LiteralPath (Join-Path $fixture $file) -Value "Inert test fixture: $file" -Encoding UTF8 }
     foreach ($file in @('README.md', 'docs\KNOWN_LIMITATIONS.md', 'docs\VALIDATION.md')) {
         Set-Content -LiteralPath (Join-Path $fixture $file) -Value "Optional public documentation: $file" -Encoding UTF8
@@ -85,7 +85,7 @@ try {
     Assert-Check 'installation data starts empty' (@(Get-ChildItem -LiteralPath (Join-Path $install 'data') -Force).Count -eq 0)
     Assert-Check 'non-whitelisted files are excluded' (-not (Test-Path -LiteralPath (Join-Path $install 'private-do-not-copy.txt')))
     $copied = @(Get-ChildItem -LiteralPath $install -Recurse -Force -File)
-    Assert-Check 'only whitelisted files and optional public docs are installed' ($copied.Count -eq 14)
+    Assert-Check 'only whitelisted files and optional public docs are installed' ($copied.Count -eq 16)
     $allHashesMatch = $true
     foreach ($file in $copied) {
         $relative = [IO.Path]::GetRelativePath($install, $file.FullName)

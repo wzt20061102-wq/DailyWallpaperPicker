@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{8891A990-5E65-4383-BEFF-85FC514C04F3}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>DailyWallpaperPicker.Tests</AssemblyName>
+    <RootNamespace>DailyWallpaperPicker</RootNamespace>
+  </PropertyGroup>
+  <Import Project="..\build\Common.props" />
+  <ItemGroup>
+    <Compile Include="**\*.cs" Exclude="obj\**\*" />
+    <ProjectReference Include="..\src\DailyWallpaperPicker.csproj"><Project>{8FD395DE-2D77-47CF-B326-D6A157389F88}</Project><Name>DailyWallpaperPicker</Name></ProjectReference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

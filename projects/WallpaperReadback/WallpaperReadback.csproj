@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{D7D9BFED-A1FC-468E-B34D-DF815C4609E4}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>WallpaperReadback</AssemblyName>
+    <RootNamespace>DailyWallpaperPicker</RootNamespace>
+  </PropertyGroup>
+  <Import Project="..\..\build\Common.props" />
+  <ItemGroup><Compile Include="..\..\src\WallpaperReadback.cs"><Link>WallpaperReadback.cs</Link></Compile></ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

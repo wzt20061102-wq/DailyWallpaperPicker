@@ -1,33 +1,57 @@
 # SPDX-License-Identifier: GPL-3.0-only
-param([string]$OutputDirectory='')
+param([string]$OutputDirectory = '', [string]$SourceRevision = '')
 Set-StrictMode -Version Latest
-$ErrorActionPreference='Stop'
-if($PSVersionTable.PSVersion.Major -lt 7){throw 'PowerShell 7 or later is required.'}
-if(-not [Environment]::Is64BitOperatingSystem){throw '64-bit Windows is required.'}
-$root=Split-Path -Parent $PSScriptRoot
-$source=Join-Path $root 'src'
-$output=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $root 'artifacts\bin'}
-$framework=Join-Path ([Environment]::GetFolderPath('Windows')) 'Microsoft.NET\Framework64\v4.0.30319'
-$compiler=Join-Path $framework 'csc.exe'
-if(-not (Test-Path -LiteralPath $compiler)){throw '.NET Framework 4.x compiler is missing. Install .NET Framework 4.8 on Windows.'}
-New-Item -ItemType Directory -Path $output -Force|Out-Null
-$arguments=@('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output',('/out:'+(Join-Path $output 'DailyWallpaperPicker.exe')),('/win32manifest:'+(Join-Path $source 'app.manifest')),('/win32icon:'+(Join-Path $source 'picker.ico')))
-foreach($name in @('System.dll','System.Core.dll','System.Web.Extensions.dll','System.Xaml.dll','System.Drawing.dll','System.Windows.Forms.dll')){$arguments+='/r:'+(Join-Path $framework $name)}
-foreach($name in @('PresentationCore.dll','PresentationFramework.dll','WindowsBase.dll')){$arguments+='/r:'+(Join-Path $framework ('WPF\'+$name))}
-foreach($name in @('Models.cs','Infrastructure.cs','PickerController.cs','PickerWindow.cs','SelfTests.cs','Program.cs')){$arguments+=Join-Path $source $name}
-& $compiler @arguments
-$compileExit=$LASTEXITCODE
-if($compileExit -ne 0){throw "Application compilation failed: $compileExit"}
-foreach($name in @('SteamWorker','WallpaperReadback')){
- $arguments=@('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output',('/out:'+(Join-Path $output ($name+'.exe'))))
- foreach($assembly in @('System.dll','System.Core.dll','System.Web.Extensions.dll')){$arguments+='/r:'+(Join-Path $framework $assembly)}
- $arguments+=Join-Path $source ($name+'.cs')
- & $compiler @arguments
- $compileExit=$LASTEXITCODE
- if($compileExit -ne 0){throw "$name compilation failed: $compileExit"}
+$ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 or later is required.' }
+if (-not [Environment]::Is64BitOperatingSystem) { throw '64-bit Windows is required.' }
+$root = Split-Path -Parent $PSScriptRoot
+$output = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root 'artifacts\bin' }
+$framework = Join-Path ([Environment]::GetFolderPath('Windows')) 'Microsoft.NET\Framework64\v4.0.30319'
+$msbuild = Join-Path $framework 'MSBuild.exe'
+if (-not (Test-Path -LiteralPath $msbuild)) { throw '.NET Framework 4.x MSBuild is missing. Install .NET Framework 4.8 on Windows.' }
+$version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw -Encoding UTF8).Trim()
+if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-preview\.(\d+))?$') { throw 'Unsupported VERSION format.' }
+$assemblyVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+$revisionNumber = if ($Matches.ContainsKey(4)) { $Matches[4] } else { '0' }
+$fileVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$revisionNumber"
+if (-not $SourceRevision -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    $revision = & git -C $root rev-parse HEAD 2>$null
+    $gitExit = $LASTEXITCODE
+    if ($gitExit -eq 0) { $SourceRevision = "$revision".Trim() }
 }
-foreach($name in @('DailyWallpaperPicker.exe','SteamWorker.exe','WallpaperReadback.exe')){
- $file=Join-Path $output $name
- if(-not (Test-Path -LiteralPath $file) -or (Get-Item -LiteralPath $file).Length -eq 0){throw "Missing output: $name"}
- [pscustomobject]@{name=$name;sha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash}
+if ($SourceRevision -and $SourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'SourceRevision must be a full Git commit hash.' }
+$informationVersion = if ($SourceRevision) { "$version+$SourceRevision" } else { "$version+source" }
+New-Item -ItemType Directory -Path $output -Force | Out-Null
+$generated = Join-Path $output 'generated'
+New-Item -ItemType Directory -Path $generated -Force | Out-Null
+$versionFile = Join-Path $generated 'VersionInfo.cs'
+$metadata = @"
+// Generated from VERSION by Build.ps1. Do not edit.
+using System.Reflection;
+[assembly: AssemblyCompany("wzt20061102-wq")]
+[assembly: AssemblyProduct("DailyWallpaperPicker")]
+[assembly: AssemblyCopyright("Copyright (C) 2026 wzt20061102-wq")]
+[assembly: AssemblyVersion("$assemblyVersion")]
+[assembly: AssemblyFileVersion("$fileVersion")]
+[assembly: AssemblyInformationalVersion("$informationVersion")]
+"@
+[IO.File]::WriteAllText($versionFile, $metadata, [Text.UTF8Encoding]::new($false))
+$arguments = @(
+    (Join-Path $root 'DailyWallpaperPicker.sln'), '/nologo', '/verbosity:minimal', '/t:Rebuild',
+    '/p:Configuration=Release', '/p:Platform=x64', ("/p:OutputPath=$output\"),
+    ("/p:GeneratedVersionFile=$versionFile"), ("/p:FrameworkPathOverride=$framework"), ("/p:ArtifactsRoot=$output\intermediate")
+)
+& $msbuild @arguments
+$buildExit = $LASTEXITCODE
+if ($buildExit -ne 0) { throw "Solution build failed: $buildExit" }
+Copy-Item -LiteralPath (Join-Path $root 'VERSION') -Destination (Join-Path $output 'VERSION')
+$records = foreach ($name in @('DailyWallpaperPicker.exe', 'SteamWorker.exe', 'WallpaperReadback.exe', 'DailyWallpaperPicker.Tests.exe')) {
+    $file = Join-Path $output $name
+    if (-not (Test-Path -LiteralPath $file) -or (Get-Item -LiteralPath $file).Length -eq 0) { throw "Missing output: $name" }
+    $actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($file)
+    if ($actualVersion.FileVersion -cne $fileVersion -or $actualVersion.ProductVersion -cne $informationVersion) { throw "Version mismatch: $name" }
+    [pscustomobject]@{ name = $name; sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash; fileVersion = $actualVersion.FileVersion; productVersion = $actualVersion.ProductVersion }
 }
+@{ version = $version; sourceRevision = $SourceRevision; buildExitCode = $buildExit; files = @($records); createdUtc = [DateTime]::UtcNow.ToString('o') } |
+    ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'build-info.json') -Encoding UTF8
+$records

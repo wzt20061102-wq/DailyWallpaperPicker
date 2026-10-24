@@ -1,0 +1,34 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DailyWallpaperPicker", "src\DailyWallpaperPicker.csproj", "{8FD395DE-2D77-47CF-B326-D6A157389F88}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamWorker", "projects\SteamWorker\SteamWorker.csproj", "{D78510E1-3748-4F6A-9E8A-C5EA33B6E474}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WallpaperReadback", "projects\WallpaperReadback\WallpaperReadback.csproj", "{D7D9BFED-A1FC-468E-B34D-DF815C4609E4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DailyWallpaperPicker.Tests", "tests\DailyWallpaperPicker.Tests.csproj", "{8891A990-5E65-4383-BEFF-85FC514C04F3}"
+EndProject
+Global
+  GlobalSection(SolutionConfigurationPlatforms) = preSolution
+    Release|x64 = Release|x64
+    Debug|x64 = Debug|x64
+  EndGlobalSection
+  GlobalSection(ProjectConfigurationPlatforms) = postSolution
+    {8FD395DE-2D77-47CF-B326-D6A157389F88}.Release|x64.ActiveCfg = Release|x64
+    {8FD395DE-2D77-47CF-B326-D6A157389F88}.Release|x64.Build.0 = Release|x64
+    {8FD395DE-2D77-47CF-B326-D6A157389F88}.Debug|x64.ActiveCfg = Debug|x64
+    {8FD395DE-2D77-47CF-B326-D6A157389F88}.Debug|x64.Build.0 = Debug|x64
+    {D78510E1-3748-4F6A-9E8A-C5EA33B6E474}.Release|x64.ActiveCfg = Release|x64
+    {D78510E1-3748-4F6A-9E8A-C5EA33B6E474}.Release|x64.Build.0 = Release|x64
+    {D78510E1-3748-4F6A-9E8A-C5EA33B6E474}.Debug|x64.ActiveCfg = Debug|x64
+    {D78510E1-3748-4F6A-9E8A-C5EA33B6E474}.Debug|x64.Build.0 = Debug|x64
+    {D7D9BFED-A1FC-468E-B34D-DF815C4609E4}.Release|x64.ActiveCfg = Release|x64
+    {D7D9BFED-A1FC-468E-B34D-DF815C4609E4}.Release|x64.Build.0 = Release|x64
+    {D7D9BFED-A1FC-468E-B34D-DF815C4609E4}.Debug|x64.ActiveCfg = Debug|x64
+    {D7D9BFED-A1FC-468E-B34D-DF815C4609E4}.Debug|x64.Build.0 = Debug|x64
+    {8891A990-5E65-4383-BEFF-85FC514C04F3}.Release|x64.ActiveCfg = Release|x64
+    {8891A990-5E65-4383-BEFF-85FC514C04F3}.Release|x64.Build.0 = Release|x64
+    {8891A990-5E65-4383-BEFF-85FC514C04F3}.Debug|x64.ActiveCfg = Debug|x64
+    {8891A990-5E65-4383-BEFF-85FC514C04F3}.Debug|x64.Build.0 = Debug|x64
+  EndGlobalSection
+EndGlobal

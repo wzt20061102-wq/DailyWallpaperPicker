@@ -23,7 +23,7 @@ if (Test-Path -LiteralPath $target) {
 # No wallpaper, saved preference, Steam library, or local test data is copied.
 $files = @(
     'DailyWallpaperPicker.exe', 'SteamWorker.exe', 'WallpaperReadback.exe',
-    'Launch.cmd', 'LICENSE', 'LICENSE.STEAMWORKS-EXCEPTION', 'THIRD_PARTY_NOTICES.md',
+    'Launch.cmd', 'LICENSE', 'LICENSE.STEAMWORKS-EXCEPTION', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'build-info.json',
     'scripts\Install.ps1', 'scripts\Enable-Startup.ps1', 'scripts\Disable-Startup.ps1',
     'scripts\Startup.Common.ps1'
 )

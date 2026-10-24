@@ -15,7 +15,7 @@
 
 `Launch.cmd` 相当于运行 `DailyWallpaperPicker.exe --show`。请将包内三个 `.exe` 保持在同一目录，不要只复制主程序。程序首次启动不需要导入别人的候选或缓存，也不要求填写密码、Cookie 或 API Key。
 
-关闭窗口会收起到托盘。右键托盘图标可以重新打开今日候选、暂停每日推荐或退出。退出后当天不会继续提醒。
+关闭窗口会收起到托盘。右键托盘图标可以重新打开今日候选、暂停每日推荐或退出。便携运行退出后不再提醒；如果已有独立的每日 Windows 启动任务，任务仍可在约定时间重新启动程序。
 
 ### 可选：固定安装与登录启动
 
@@ -58,6 +58,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Disable-Startup.ps1
 - 初次读取 Wallpaper Engine 本地最近使用记录中的壁纸标签作为偏好线索；之后参考成功选用的壁纸。仅预览、关闭或不选，不算“不喜欢”。
 - 新作保留探索性。推荐历史和偏好保存在本机，90 天内避免重复推荐。
 - 明确点过「不喜欢」的作品不再推荐；相似题材按工坊标签降低排序权重，仍保留探索机会。反馈只存本机，不会发送给作者或 Steam。换图期间显示准备进度，失败时保留已保存的反馈并允许重试。
+- 反馈在点击被接受时立即保存；即使等待换图期间跨过 23:00，反馈仍会保留，过期批次的换卡操作会取消。
 - 默认仅选择标记为全年龄的 Scene 或 Video，单张不超过 300 MB。分类依据工坊标签，并非人工审核。
 - 错过时间后，在下次运行时补最近一期，不连续弹出多天的窗口；程序不会唤醒关机或休眠的电脑。
 
@@ -81,6 +82,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Disable-Startup.ps1
 | `thumbnails/` | 候选封面 |
 | `runtime_output.txt` | 本机运行日志 |
 
+`state.json` 带有格式版本，升级时自动迁移旧记录；遇到更新版本的数据会停止，避免覆盖。成功作业的辅助文件及时清理，失败作业最多保留 30 组、7 天；日志超过 4 MB 轮转，历史日志最多 5 份、14 天。
+
+已有自定义安装可通过 `--data-dir` 指定数据位置，或在程序旁放置 `install-profile.json`（包含绝对路径 `DataDirectory`）。命令行参数优先；升级时保留此配置，公开包不携带任何人的数据路径。
+
 停止使用工具不会自动删除这些数据。若桌面仍使用工具缓存里的壁纸，请先在 Wallpaper Engine 中切换到其他壁纸，再删除缓存。反馈问题时先检查日志，删去用户名、完整路径和不希望公开的壁纸记录。
 
 升级时先从托盘退出程序，再用新版程序和随附文件更新原目录，保留自己的 `data` 目录。若想重置「不喜欢」，先退出程序，再将 `data/feedback.json` 移到目录外备存；下次启动会从空反馈开始。
@@ -102,7 +107,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test.ps1
 ```
 
-构建结果在 `artifacts/bin`。离线测试默认使用新建的临时目录，结束后输出结果位置，不调用真实 Steam 或修改桌面。`Build.ps1` 支持 `-OutputDirectory`；`Test.ps1` 支持 `-BinaryDirectory` 和 `-OutputDirectory`，测试输出目录必须是尚不存在的新目录。
+构建结果在 `artifacts/bin`。可用 `DailyWallpaperPicker.sln` 查看主程序、两个辅助程序及独立测试工程；主程序不包含测试代码。离线测试默认使用新建的临时目录，外部进程启动边界会拒绝非测试调用，并在结果中记录实际计数。测试不会使用真实 Steam 或切换桌面；它不是操作系统级文件访问审计。`Build.ps1` 支持 `-OutputDirectory` 和 `-SourceRevision`；`Test.ps1` 支持 `-BinaryDirectory` 和 `-OutputDirectory`，测试输出目录必须是尚不存在的新目录。
+
+程序文件属性、启动日志和 `build-info.json` 记录版本及构建提交。模块边界与维护约束见[代码结构说明](docs/ARCHITECTURE.md)。
 
 运行 `scripts/Package.ps1` 可执行发布构建、检查并生成 ZIP。发布包只应包含程序、许可和使用文件；不要把运行后生成的 `data`、工坊媒体、个人日志或本机快捷方式重新打包上传。
 

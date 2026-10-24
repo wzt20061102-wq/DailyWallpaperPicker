@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
-param([string]$OutputDirectory='')
+param([string]$OutputDirectory='', [string]$SourceRevision='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){throw 'PowerShell 7 or later is required.'}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root=Split-Path -Parent $PSScriptRoot
+if(-not $SourceRevision -and (Get-Command git -ErrorAction SilentlyContinue)){
+ $revision=& git -C $root rev-parse HEAD 2>$null
+ $gitExit=$LASTEXITCODE
+ if($gitExit -eq 0){$SourceRevision="$revision".Trim()}
+}
+if($SourceRevision -and $SourceRevision -notmatch '^[0-9a-f]{40}$'){throw 'SourceRevision must be a full Git commit hash.'}
 $version=(Get-Content -LiteralPath (Join-Path $root 'VERSION') -Encoding UTF8 -Raw).Trim()
 if($version -notmatch '^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$'){throw 'Invalid version'}
 $output=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $root 'artifacts\release'}
@@ -14,10 +20,10 @@ $bin=Join-Path $job 'bin'
 New-Item -ItemType Directory -Path $output,(Join-Path $job 'portable'),(Join-Path $job 'source')|Out-Null
 $portable=Join-Path $job 'portable'
 $source=Join-Path $job 'source'
-$rootFiles=@('README.md','LICENSE','LICENSE.STEAMWORKS-EXCEPTION','THIRD_PARTY_NOTICES.md','VERSION','Launch.cmd','.gitignore','.gitattributes')
+$rootFiles=@('README.md','LICENSE','LICENSE.STEAMWORKS-EXCEPTION','THIRD_PARTY_NOTICES.md','VERSION','Launch.cmd','.gitignore','.gitattributes','DailyWallpaperPicker.sln')
 foreach($name in $rootFiles){Copy-Item -LiteralPath (Join-Path $root $name) -Destination $source}
-foreach($folder in @('src','scripts','docs')){Copy-Item -LiteralPath (Join-Path $root $folder) -Destination (Join-Path $source $folder) -Recurse}
-$allowed=@('.cs','.ps1','.md','.cmd','.manifest','.ico','.yml')
+foreach($folder in @('src','scripts','docs','tests','projects','build','.github')){if(Test-Path -LiteralPath (Join-Path $root $folder)){Copy-Item -LiteralPath (Join-Path $root $folder) -Destination (Join-Path $source $folder) -Recurse}}
+$allowed=@('.cs','.ps1','.md','.cmd','.manifest','.ico','.yml','.csproj','.props','.sln')
 $privatePattern='(?i)(C:\\Users\\|'+('codex'+':/'+'/threads/')+'|github_pat_[A-Za-z0-9_]+|ghp_[A-Za-z0-9]{20,})'
 foreach($file in @(Get-ChildItem -LiteralPath $source -File -Recurse -Force)){
  $relative=[IO.Path]::GetRelativePath($source,$file.FullName).Replace('\','/')
@@ -28,10 +34,21 @@ foreach($file in @(Get-ChildItem -LiteralPath $source -File -Recurse -Force)){
  }
 }
 # Build and test the frozen source copy that will be included in the source ZIP.
-& (Join-Path $source 'scripts\Build.ps1') -OutputDirectory $bin
+$frozenHashes=@{}
+foreach($file in @(Get-ChildItem -LiteralPath $source -File -Recurse -Force)){
+ $frozenHashes[[IO.Path]::GetRelativePath($source,$file.FullName)]=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+}
+& (Join-Path $source 'scripts\Build.ps1') -OutputDirectory $bin -SourceRevision $SourceRevision
 $tests=& (Join-Path $source 'scripts\Test.ps1') -BinaryDirectory $bin
 & (Join-Path $source 'scripts\Test-PortableScripts.ps1')
+$afterBuild=@(Get-ChildItem -LiteralPath $source -File -Recurse -Force)
+if($afterBuild.Count -ne $frozenHashes.Count){throw 'Building or testing changed the frozen source file list.'}
+foreach($file in $afterBuild){
+ $relative=[IO.Path]::GetRelativePath($source,$file.FullName)
+ if(-not $frozenHashes.ContainsKey($relative) -or (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -cne $frozenHashes[$relative]){throw "Frozen source changed during build/test: $relative"}
+}
 foreach($name in @('DailyWallpaperPicker.exe','SteamWorker.exe','WallpaperReadback.exe')){Copy-Item -LiteralPath (Join-Path $bin $name) -Destination $portable}
+Copy-Item -LiteralPath (Join-Path $bin 'build-info.json') -Destination $portable
 foreach($name in @('README.md','LICENSE','LICENSE.STEAMWORKS-EXCEPTION','THIRD_PARTY_NOTICES.md','VERSION','Launch.cmd')){Copy-Item -LiteralPath (Join-Path $source $name) -Destination $portable}
 Copy-Item -LiteralPath (Join-Path $source 'docs') -Destination (Join-Path $portable 'docs') -Recurse
 New-Item -ItemType Directory -Path (Join-Path $portable 'scripts')|Out-Null
@@ -53,6 +70,6 @@ Write-Manifest $source
 Write-Manifest $portable
 $records=@(Zip-Verified $source (Join-Path $output ("DailyWallpaperPicker-$version-source.zip"));Zip-Verified $portable (Join-Path $output ("DailyWallpaperPicker-$version-win-x64.zip")))
 $records|ForEach-Object {$_.sha256+'  '+$_.name}|Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding UTF8
-@{version=$version;offlineTests=$tests;packages=$records;createdUtc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $job 'package-report.json') -Encoding UTF8
+@{version=$version;sourceRevision=$SourceRevision;offlineTests=$tests;packages=$records;createdUtc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $job 'package-report.json') -Encoding UTF8
 $records
 Write-Output "Package directory: $output"

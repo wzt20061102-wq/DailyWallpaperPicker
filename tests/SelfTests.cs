@@ -17,7 +17,7 @@ using System.Threading.Tasks;
 namespace DailyWallpaperPicker
 {
     /// <summary>Offline tests: use only generated fixtures, never Steam or desktop state.</summary>
-    public static class SelfTests
+    public static partial class SelfTests
     {
         private sealed class TestResult
         {
@@ -271,6 +271,7 @@ namespace DailyWallpaperPicker
             RecommendationPreferenceTests(results, fixtureRoot);
             RecommendationFeedbackTests(results, fixtureRoot);
             DislikeControllerTests(results, fixtureRoot);
+            MaintenanceTests(results, fixtureRoot);
 
             Check(results, "readback_scene_package_equivalence_is_directory_and_type_scoped", delegate
             {
@@ -308,7 +309,7 @@ namespace DailyWallpaperPicker
                 failed = failed,
                 fixtureRoot = fixtureRoot,
                 fixtureFilesRetained = true,
-                safety = new { realSteamCalled = false, desktopCalled = false, realUserDirectoriesModified = false, writesLimitedToGeneratedOutputFixtures = true },
+                safety = new { processGuardEnabled = ProcessBoundary.Enabled, permittedFixtureStarts = ProcessBoundary.FixtureStarts, unexpectedProcessStarts = ProcessBoundary.UnexpectedStarts, fileBoundary = "Generated fixtures under the test output directory; no OS-wide filesystem monitor is claimed." },
                 uiDpiValidation = new
                 {
                     status = "not_run",
@@ -746,7 +747,7 @@ namespace DailyWallpaperPicker
                     if (prepared) state.PreparedCandidates.Add(item); else state.Candidates.Add(item);
                 }
             }
-            return state;
+            return StateMigration.Upgrade(state);
         }
 
         private static WorkerReply DislikeQueryFixture()
