@@ -36,7 +36,7 @@ namespace DailyWallpaperPicker
                     string project;
                     project=null;
                     bool corrupt=false;
-                    if(Directory.Exists(cached)&&File.Exists(Path.Combine(cached,".verified.json")))try
+                    if(Directory.Exists(cached))try
                     {
                         project=await Task.Run(()=>CacheStore.Verify(cached)).ConfigureAwait(false);
                     }
@@ -48,6 +48,7 @@ namespace DailyWallpaperPicker
                     {
                         string current=await wallpaper.GetCurrent().ConfigureAwait(false);
                         if(!IsPreparationCurrent(batch,currentBatch))return;
+                        if(!wallpaper.CanSafelyClean)throw new IOException("未取得当前壁纸的可靠结果，暂缓修复缓存。");
                         await QuarantineCorruptCacheAsync(cached,c.Id,current).ConfigureAwait(false);
                     }
                     if(project==null)
@@ -138,57 +139,6 @@ namespace DailyWallpaperPicker
             if(!reply.subscribedBefore.HasValue||!reply.subscribedAfter.HasValue)throw new IOException("Steam 未返回完整订阅校验结果，已停止。");
             if(reply.subscribedBefore.Value!=reply.subscribedAfter.Value)throw new IOException("Steam 订阅状态发生异常变化，已停止。");
             if(String.IsNullOrWhiteSpace(reply.installPath))throw new IOException("Steam 未返回完整壁纸位置，已停止。");
-        }
-        Task Thumbnail(Candidate c,string batch,bool currentBatch)
-        {
-            return Thumbnail(c,batch,TimeSpan.FromSeconds(15),currentBatch);
-        }
-        // A cover is optional: failure must not stop the full wallpaper download or
-        // leave the daily preparation job waiting indefinitely on an image server.
-        internal async Task Thumbnail(Candidate c,string batch,TimeSpan timeout,bool currentBatch=false)
-        {
-            string temporary=null;
-            try
-            {
-                if(String.IsNullOrWhiteSpace(c.Id)||!c.Id.All(Char.IsDigit))throw new IOException("无效封面编号。");
-                string dir=Path.Combine(data,"thumbnails");
-                Directory.CreateDirectory(dir);
-                string file=Path.Combine(dir,c.Id+".img");
-                if(!File.Exists(file)&&!String.IsNullOrEmpty(c.PreviewUrl))
-                {
-                    byte[] bytes=await ThumbnailDownloader.DownloadAsync(c.PreviewUrl,timeout,cancellation).ConfigureAwait(false);
-                    if(!IsPreparationCurrent(batch,currentBatch))return;
-                    temporary=Path.Combine(dir,c.Id+"-"+Guid.NewGuid().ToString("N")+".tmp");
-                    File.WriteAllBytes(temporary,bytes);
-                    if(!File.Exists(file))File.Move(temporary,file);
-                }
-                if(File.Exists(file))Update(batch,c.Id,x=>x.ThumbnailPath=file);
-            }
-            catch(OperationCanceledException)
-            {
-                throw;
-            }
-            catch(Exception ex)
-            {
-                LogSafely("THUMBNAIL SKIPPED batch="+batch+" id="+c.Id+" "+Friendly(ex));
-            }
-            finally
-            {
-                if(temporary!=null)try
-                {
-                    if(File.Exists(temporary))File.Delete(temporary);
-                }
-                catch(IOException)
-                {
-                }
-                catch(UnauthorizedAccessException)
-                {
-                }
-            }
-        }
-        internal static Task<byte[]> DownloadThumbnail(string url,TimeSpan timeout)
-        {
-            return ThumbnailDownloader.DownloadAsync(url,timeout,CancellationToken.None);
         }
     }
 }

@@ -244,6 +244,10 @@ namespace DailyWallpaperPicker
                 throw;
             }
         }
+        internal void KeepPreviewOnExit()
+        {
+            wallpaper.KeepPreviewOnExit();
+        }
         public void HidePreview()
         {
             lock(sync)previewEpoch++;

@@ -71,20 +71,31 @@ namespace DailyWallpaperPicker
                 {
                     var stdout = redirectOutput ? process.StandardOutput.ReadToEndAsync() : Task.FromResult("");
                     var stderr = redirectOutput ? process.StandardError.ReadToEndAsync() : Task.FromResult("");
-                    using (linked.Token.Register(() => KillOwned(process)))
+                    // A launcher can exit while a descendant still owns its inherited pipes.
+                    // The same deadline must cover both exit and EOF, not just WaitForExit.
+                    var exited = Task.Run(() => process.WaitForExit(checked(seconds * 1000)));
+                    var completed = Task.WhenAll(new Task[] { exited, stdout, stderr });
+                    ObserveFailure(completed);
+                    using (var timer = CancellationTokenSource.CreateLinkedTokenSource(linked.Token))
                     {
-                        bool exited = await Task.Run(() => process.WaitForExit(checked(seconds * 1000))).ConfigureAwait(false);
+                        var deadline = Task.Delay(checked(seconds * 1000), timer.Token);
+                        var winner = await Task.WhenAny(completed, deadline).ConfigureAwait(false);
                         linked.Token.ThrowIfCancellationRequested();
-                        if (!exited)
+                        if (winner != completed || !exited.Result)
                         {
                             KillOwned(process);
+                            // Disposing closes our read handles; descendants are never killed.
+                            // Observe the abandoned reads if they subsequently fault on closure.
                             throw new TimeoutException("操作超时，稍后可以重试。");
                         }
+                        await completed.ConfigureAwait(false);
+                        linked.Token.ThrowIfCancellationRequested();
+                        timer.Cancel();
                         return new RunResult
                         {
                             ExitCode = process.ExitCode,
-                            Output = await stdout.ConfigureAwait(false),
-                            Error = await stderr.ConfigureAwait(false)
+                            Output = stdout.Result,
+                            Error = stderr.Result
                         };
                     }
                 }
@@ -94,6 +105,13 @@ namespace DailyWallpaperPicker
                     lock (Gate) Children.Remove(process);
                 }
             }
+        }
+
+        static void ObserveFailure(Task task)
+        {
+            task.ContinueWith(t => { var ignored = t.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         static void KillOwned(Process process)

@@ -18,6 +18,13 @@ namespace DailyWallpaperPicker
 {
     internal static class ThumbnailDownloader
     {
+        // Apply the same bounded decoder used by cards before trusting cached bytes.
+        // A successful HTTP status (or an image MIME type) does not prove image data.
+        internal static void ValidateFile(string path)
+        {
+            CoverAnimation.Load(path);
+        }
+
         internal static async Task<byte[]> DownloadAsync(string url,TimeSpan timeout,CancellationToken applicationCancellation)
         {
             Uri uri;

@@ -32,6 +32,20 @@ namespace DailyWallpaperPicker
         {
             if((File.GetAttributes(p)&FileAttributes.ReparsePoint)!=0)throw new IOException("缓存中检测到链接，已停止操作。");
         }
+        // A lexical child can still escape through a linked root or ancestor. Check
+        // the complete existing path before traversing or publishing cache files.
+        internal static void NoLinkedAncestors(string path)
+        {
+            string current=Path.GetFullPath(path);
+            while(!String.IsNullOrEmpty(current))
+            {
+                try { NoLinks(current); }
+                catch(FileNotFoundException) { }
+                catch(DirectoryNotFoundException) { }
+                DirectoryInfo parent=Directory.GetParent(current);
+                current=parent==null?null:parent.FullName;
+            }
+        }
         public static List<string> Files(string dir)
         {
             NoLinks(dir);
@@ -61,10 +75,14 @@ namespace DailyWallpaperPicker
         }
         public static string Import(string src,string root,string id,long maxBytes)
         {
-            if(!id.All(Char.IsDigit))throw new IOException("无效壁纸编号");
+            if(String.IsNullOrWhiteSpace(id)||!id.All(Char.IsDigit))throw new IOException("无效壁纸编号");
+            NoLinkedAncestors(root);
             Directory.CreateDirectory(root);
+            NoLinkedAncestors(root);
             string dest=Path.Combine(root,id);
-            if(Directory.Exists(dest)&&File.Exists(Path.Combine(dest,".verified.json")))return Verify(dest);
+            // Existing files must be verified or quarantined by the controller
+            // after a reliable desktop readback. Import never overwrites them.
+            if(Directory.Exists(dest))return Verify(dest);
             string stage=Path.Combine(root,id+"-"+Guid.NewGuid().ToString("N")+".staging");
             var srcFiles=Files(src);
             if(srcFiles.Count==0||srcFiles.Sum(f=>new FileInfo(f).Length)>maxBytes)throw new IOException("壁纸为空或超过 300 MB。");
@@ -87,7 +105,8 @@ namespace DailyWallpaperPicker
                 if(!srcDirs.SequenceEqual(dstDirs,StringComparer.OrdinalIgnoreCase))throw new IOException("壁纸目录集合不一致。");
                 CheckProject(stage);
                 Json.Write(Path.Combine(stage,".verified.json"),manifest);
-                if(Directory.Exists(dest))SafeDelete(dest,root);
+                NoLinkedAncestors(root);
+                if(Directory.Exists(dest)||File.Exists(dest))throw new IOException("缓存位置已存在，暂缓替换，请重试。");
                 Directory.Move(stage,dest);
                 return Path.Combine(dest,"project.json");
             }
@@ -101,9 +120,10 @@ namespace DailyWallpaperPicker
         {
             string p=Path.Combine(root,"project.json");
             var d=Json.Read<Dictionary<string,object>>(p);
+            if(d==null)throw new IOException("壁纸项目记录为空。");
             string type=d.ContainsKey("type")?Convert.ToString(d["type"]).ToLowerInvariant():"";
             if(type!="scene"&&type!="video")throw new IOException("该壁纸不是 Scene 或 Video，已跳过。");
-            if(!d.ContainsKey("file"))throw new IOException("壁纸缺少主文件。");
+            if(!d.ContainsKey("file")||!(d["file"] is string)||String.IsNullOrWhiteSpace((string)d["file"]))throw new IOException("壁纸缺少有效主文件。");
             string file=Path.GetFullPath(Path.Combine(root,Convert.ToString(d["file"])));
             if(!Under(file,root))throw new IOException("壁纸主文件路径越界。");
             bool packed=type=="scene"&&File.Exists(Path.Combine(root,"scene.pkg"))&&new FileInfo(Path.Combine(root,"scene.pkg")).Length>0;
@@ -112,7 +132,17 @@ namespace DailyWallpaperPicker
         }
         public static string Verify(string root)
         {
+            try { return VerifyCore(root); }
+            catch(ArgumentException ex) { throw new IOException("缓存校验记录或项目格式无效，请重试下载。",ex); }
+            catch(InvalidOperationException ex) { throw new IOException("缓存校验记录或项目格式无效，请重试下载。",ex); }
+            catch(NotSupportedException ex) { throw new IOException("缓存校验记录或项目路径无效，请重试下载。",ex); }
+            catch(FormatException ex) { throw new IOException("缓存校验记录或项目格式无效，请重试下载。",ex); }
+            catch(OverflowException ex) { throw new IOException("缓存校验记录或项目格式无效，请重试下载。",ex); }
+        }
+        static string VerifyCore(string root)
+        {
             root=Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+            NoLinkedAncestors(root);
             var files=Files(root);
             var hashes=Json.Read<Dictionary<string,string>>(Path.Combine(root,".verified.json"));
             if(hashes==null||hashes.Count==0)throw new IOException("缓存校验记录为空。");
@@ -134,7 +164,9 @@ namespace DailyWallpaperPicker
         public static void SafeDelete(string path,string root)
         {
             if(!Under(path,root))throw new IOException("拒绝清理缓存目录以外的文件。");
+            NoLinkedAncestors(path);
             Files(path);
+            NoLinkedAncestors(path);
             Directory.Delete(path,true);
         }
     }

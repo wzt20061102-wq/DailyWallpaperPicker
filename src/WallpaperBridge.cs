@@ -227,7 +227,7 @@ namespace DailyWallpaperPicker
             var config=ReadConfig();
             return config==null?null:config.Path;
         }
-        public bool CanSafelyClean
+        public virtual bool CanSafelyClean
         {
             get
             {
@@ -438,6 +438,7 @@ namespace DailyWallpaperPicker
         }
         void EndPreview(int generation,string title)
         {
+            pendingWindows.Cancel(title);
             if(CloseOwnedPreview(title))pendingWindows.Complete(title);
             lock(gate)
             {
@@ -460,7 +461,7 @@ namespace DailyWallpaperPicker
                 previewTitles[generation]=title;
                 PreviewPath=project;
             }
-            foreach(var item in previous)CloseOwnedPreview(item);
+            foreach(var item in previous){pendingWindows.Cancel(item);CloseOwnedPreview(item);}
             try
             {
                 if(!PreviewActive(generation))
@@ -481,7 +482,12 @@ namespace DailyWallpaperPicker
                     return;
                 }
                 string props="RAW~({\"volume\":0})~END";
-                pendingWindows.Track(title);
+                pendingWindows.Arm(title,exe);
+                if(!PreviewActive(generation))
+                {
+                    EndPreview(generation,title);
+                    return;
+                }
                 var r=await Processes.Run(exe,"-control openWallpaper -file "+Processes.Quote(project)+" -playInWindow "+Processes.Quote(title)+" -width 800 -height 450 -properties "+props,Path.GetDirectoryName(exe),30,lifetime).ConfigureAwait(false);
                 // The IPC launcher may exit before the preview window exists. A cancelled
                 // request still waits for its own title so Hide cannot leave a late window open.
@@ -544,7 +550,11 @@ namespace DailyWallpaperPicker
                 previewTitles.Clear();
                 PreviewPath=null;
             }
-            foreach(var title in titles)CloseOwnedPreview(title);
+            foreach(var title in titles){pendingWindows.Cancel(title);CloseOwnedPreview(title);}
+        }
+        public void KeepPreviewOnExit()
+        {
+            pendingWindows.KeepOnOwnerExit();
         }
         public void ShutdownPreview()
         {

@@ -38,6 +38,7 @@ internal static class WallpaperReadback {
   try{if(File.Exists(value))return true;string parent=Path.GetDirectoryName(value);return String.Equals(Path.GetFileName(value),"scene.json",StringComparison.OrdinalIgnoreCase)&&File.Exists(Path.Combine(parent,"scene.pkg"))&&File.Exists(Path.Combine(parent,"project.json"));}catch(ArgumentException){return false;}
  }
  static int Main(string[] args){
+  if(args.Length>0&&args[0]=="--preview-guard")return DailyWallpaperPicker.PreviewGuardHost.Run(args);
   var reply=new Reply{exitCode=-1,source="private-console-buffer",createdUtc=DateTime.UtcNow.ToString("o")};string outputFile=null;IntPtr console=IntPtr.Zero;
   try{
    string exe=Path.GetFullPath(Value(args,"--exe"));outputFile=Path.GetFullPath(Value(args,"--output"));

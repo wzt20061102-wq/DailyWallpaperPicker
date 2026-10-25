@@ -50,6 +50,8 @@ namespace DailyWallpaperPicker
         private bool _dislikeRunning;
         private string _itemId;
         private string _loadedImagePath;
+        private string _failedImagePath;
+        private DateTime _retryImageAfterUtc;
         private int _coverGeneration;
         private bool _disposed;
         private string _projectPath;
@@ -299,6 +301,8 @@ namespace DailyWallpaperPicker
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
             if (String.Equals(key, _loadedImagePath, StringComparison.OrdinalIgnoreCase)) return;
+            if (String.Equals(key, _failedImagePath, StringComparison.OrdinalIgnoreCase)
+                && DateTime.UtcNow < _retryImageAfterUtc) return;
             _loadedImagePath = key;
             int generation = ++_coverGeneration;
             _owner.EndHover(this, "cover-reloading");
@@ -311,12 +315,18 @@ namespace DailyWallpaperPicker
                 var cover = await Task.Run(() => CoverAnimation.Load(path));
                 if (_disposed || _owner.IsDisposed || generation != _coverGeneration) return;
                 _coverPlayer.SetAnimation(cover);
+                _failedImagePath = null;
                 _imagePlaceholder.Visibility = Visibility.Collapsed;
                 if (CanHover) _owner.BeginHover(this);
             }
             catch (Exception)
             {
                 if (_disposed || _owner.IsDisposed || generation != _coverGeneration) return;
+                // Keep duplicate renders from starting parallel decoders, but do not
+                // remember a failed attempt as a successful load for this identity.
+                _loadedImagePath = null;
+                _failedImagePath = key;
+                _retryImageAfterUtc = DateTime.UtcNow.AddSeconds(2);
                 _placeholderText.Text = "封面暂不可用";
             }
         }

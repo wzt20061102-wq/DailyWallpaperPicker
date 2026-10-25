@@ -11,6 +11,8 @@ namespace DailyWallpaperPicker
         [STAThread]
         private static int Main(string[] args)
         {
+            int fixtureExit;
+            if (ProcessPreviewFixtures.TryRun(args, out fixtureExit)) return fixtureExit;
             if (args.Length == 5 && args[0] == "download" && args[1] == "--request" && args[3] == "--response")
             {
                 var request = Json.Read<System.Collections.Generic.Dictionary<string, object>>(args[2]);
@@ -64,7 +66,8 @@ namespace DailyWallpaperPicker
             string ownTestRunner = Assembly.GetExecutingAssembly().Location;
             if (String.Equals(Path.GetFullPath(executable), ownTestRunner, StringComparison.OrdinalIgnoreCase)
                 && (arguments.StartsWith("--fixture-wait \"" + outputRoot, StringComparison.OrdinalIgnoreCase)
-                    || arguments.StartsWith("download --request \"" + outputRoot, StringComparison.OrdinalIgnoreCase)))
+                    || arguments.StartsWith("download --request \"" + outputRoot, StringComparison.OrdinalIgnoreCase)
+                    || arguments.StartsWith("--fixture-process-preview \"" + outputRoot, StringComparison.OrdinalIgnoreCase)))
             {
                 Interlocked.Increment(ref fixtureStarts);
                 return;

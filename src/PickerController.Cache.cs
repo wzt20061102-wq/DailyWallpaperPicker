@@ -27,7 +27,7 @@ namespace DailyWallpaperPicker
             if(String.IsNullOrWhiteSpace(id)||!id.All(Char.IsDigit)||String.IsNullOrWhiteSpace(directory))throw new IOException("无效壁纸缓存位置。");
             string expected=Path.Combine(cache,id);
             if(!SamePath(expected,directory)||!CacheStore.Under(expected,cache))throw new IOException("悬停预览只能读取工具自己的缓存。");
-            if((File.GetAttributes(cache)&FileAttributes.ReparsePoint)!=0)throw new IOException("缓存根目录不能是链接。");
+            CacheStore.NoLinkedAncestors(expected);
             return Path.GetFullPath(expected);
         }
         bool CacheIsInUse(string directory)
@@ -45,7 +45,9 @@ namespace DailyWallpaperPicker
                     cached=OwnedCachePath(id,cached);
                     if(String.IsNullOrWhiteSpace(current)||CacheStore.Under(current,cached)||CacheIsInUse(cached))throw new IOException("缓存正在使用或预览中，暂缓重新下载。");
                     string quarantine=Path.Combine(data,"quarantine");
+                    CacheStore.NoLinkedAncestors(quarantine);
                     Directory.CreateDirectory(quarantine);
+                    CacheStore.NoLinkedAncestors(quarantine);
                     CacheStore.Files(cached);
                     hoverVerified.Remove(cached);
                     Directory.Move(cached,Path.Combine(quarantine,id+"-"+DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")+"-"+Guid.NewGuid().ToString("N").Substring(0,8)));
@@ -107,6 +109,7 @@ namespace DailyWallpaperPicker
         internal string[] FindCleanupCandidates(string current,string preview)
         {
             if(String.IsNullOrWhiteSpace(current))throw new IOException("当前壁纸位置未知，暂缓清理。");
+            CacheStore.NoLinkedAncestors(cache);
             HashSet<string> keep;
             lock(sync)
             {
@@ -135,6 +138,7 @@ namespace DailyWallpaperPicker
             await cleanupGate.WaitAsync(cancellation).ConfigureAwait(false);
             try
             {
+                CacheStore.NoLinkedAncestors(cache);
                 string current=await wallpaper.GetCurrent().ConfigureAwait(false);
                 if(!wallpaper.CanSafelyClean)throw new IOException("未取得当前壁纸的实时结果，暂缓清理。");
                 lock(sync)

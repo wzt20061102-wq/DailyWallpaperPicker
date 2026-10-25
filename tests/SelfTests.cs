@@ -271,8 +271,12 @@ namespace DailyWallpaperPicker
             RecommendationPreferenceTests(results, fixtureRoot);
             RecommendationFeedbackTests(results, fixtureRoot);
             DislikeControllerTests(results, fixtureRoot);
+            ProcessPreviewRegressionTests(results, fixtureRoot);
             MaintenanceTests(results, fixtureRoot);
             CoverHoverTests(results, fixtureRoot);
+            PersistenceRegressionTests(results, fixtureRoot);
+            CacheSafetyRegressionTests(results, fixtureRoot);
+            CoverRecoveryRegressionTests(results, fixtureRoot);
 
             Check(results, "readback_scene_package_equivalence_is_directory_and_type_scoped", delegate
             {
@@ -451,8 +455,11 @@ namespace DailyWallpaperPicker
             });
             Check(results, "thumbnail_success_publishes_complete_bytes_without_readiness_change", delegate
             {
-                const string body = "OFFLINE THUMBNAIL FIXTURE";
-                using (var server = new ThumbnailHttpFixture((stream, token) => WriteHttp(stream, "HTTP/1.1 200 OK\r\nContent-Length: " + body.Length + "\r\nConnection: close\r\n\r\n" + body, token)))
+                byte[] body = ValidHttpCover();
+                using (var server = new ThumbnailHttpFixture(async (stream, token) => {
+                    await WriteHttp(stream, "HTTP/1.1 200 OK\r\nContent-Length: " + body.Length + "\r\nConnection: close\r\n\r\n", token).ConfigureAwait(false);
+                    await stream.WriteAsync(body, 0, body.Length, token).ConfigureAwait(false);
+                }))
                 {
                     DateTime now = new DateTime(2026, 10, 22, 15, 0, 0, DateTimeKind.Utc);
                     var candidate = new Candidate { Id = "880002", PreviewUrl = server.Url };
@@ -460,10 +467,10 @@ namespace DailyWallpaperPicker
                     var controller = FixtureController(fixtureRoot, "thumbnail-success", state, delegate { return now; });
                     controller.Thumbnail(candidate, state.BatchId, TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
                     Candidate after = controller.State.Candidates.Single();
-                    Require(server.RequestSeen && after.ThumbnailPath != null && File.ReadAllText(after.ThumbnailPath, Encoding.ASCII) == body, "完整封面字节未正确发布。");
+                    Require(server.RequestSeen && after.ThumbnailPath != null && File.ReadAllBytes(after.ThumbnailPath).SequenceEqual(body), "完整封面字节未正确发布。");
                     Require(!after.Ready && after.Error == null && after.Status == candidate.Status, "封面成功错误地标记了完整壁纸已完成。");
                     Require(Directory.GetFiles(Path.Combine(controller.DataDirectory, "thumbnails")).Length == 1, "成功后遗留临时封面。");
-                    return new { completeBytes = body.Length, candidateStillWaitingForFullWallpaper = true, imageDecodingClaimed = false, loopbackOnly = true };
+                    return new { completeBytes = body.Length, candidateStillWaitingForFullWallpaper = true, imageDecodingClaimed = true, loopbackOnly = true };
                 }
             });
             Check(results, "thumbnail_non_http_schemes_rejected_without_reading_files", delegate
@@ -767,8 +774,11 @@ namespace DailyWallpaperPicker
         {
             Check(results, "dislike_22_55_replaces_only_current_slot_and_keeps_prefetched_batch", delegate
             {
-                const string coverBody = "OFFLINE CURRENT BATCH COVER";
-                using (var server = new ThumbnailHttpFixture((stream, token) => WriteHttp(stream, "HTTP/1.1 200 OK\r\nContent-Length: " + coverBody.Length + "\r\nConnection: close\r\n\r\n" + coverBody, token)))
+                byte[] coverBody = ValidHttpCover();
+                using (var server = new ThumbnailHttpFixture(async (stream, token) => {
+                    await WriteHttp(stream, "HTTP/1.1 200 OK\r\nContent-Length: " + coverBody.Length + "\r\nConnection: close\r\n\r\n", token).ConfigureAwait(false);
+                    await stream.WriteAsync(coverBody, 0, coverBody.Length, token).ConfigureAwait(false);
+                }))
                 {
                 DateTime now = new DateTime(2026, 10, 24, 14, 55, 0, DateTimeKind.Utc);
                 string name = "dislike-current-prefetch"; var state = DislikeFixtureState(fixtureRoot, name, now);
@@ -785,7 +795,7 @@ namespace DailyWallpaperPicker
                 Require(Json.Encode(after.PreparedCandidates) == prepared, "更换当前卡片覆盖了下一期预取组。");
                 Require(Json.Encode(after.Candidates[0]) == first && Json.Encode(after.Candidates[2]) == third && after.Candidates[1].Id == "892001", "未只替换第二张卡片。");
                 Require(!after.Candidates[1].Ready && after.Candidates[1].Error.Contains("MOCK"), "模拟下载失败没有保留可重试的新候选。");
-                Require(server.RequestSeen && after.Candidates[1].ThumbnailPath != null && File.ReadAllText(after.Candidates[1].ThumbnailPath, Encoding.ASCII) == coverBody, "22:55 手动替换的完整封面被误判为过期批次。");
+                Require(server.RequestSeen && after.Candidates[1].ThumbnailPath != null && File.ReadAllBytes(after.Candidates[1].ThumbnailPath).SequenceEqual(coverBody), "22:55 手动替换的完整封面被误判为过期批次。");
                 Require(Directory.GetFiles(Path.Combine(controller.DataDirectory, "thumbnails")).Length == 1, "22:55 换卡封面发布后遗留了临时文件。");
                 Require(queries == 1 && downloads == 1 && PickerController.ReadFeedback(controller.DataDirectory).Dislikes.Count == 1, "单次更换重复查询或重复记录反馈。");
                 AssertNoExternalDislikeCalls(controller);

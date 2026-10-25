@@ -37,8 +37,15 @@ namespace DailyWallpaperPicker
                 PromoteIfDue();
                 string due=Schedule.Due(UtcNow);
                 if(state.BatchId!=due||state.PresentedBatch==due)return false;
+                string previous=state.PresentedBatch;
                 state.PresentedBatch=due;
-                Save();
+                try { Save(); }
+                catch
+                {
+                    // A failed save must not consume the reminder in this process.
+                    state.PresentedBatch=previous;
+                    throw;
+                }
                 return true;
             }
         }
@@ -66,6 +73,8 @@ namespace DailyWallpaperPicker
                 bool repairCurrent;
                 lock(sync)repairCurrent=due!=target&&state.BatchId==due&&(state.Candidates.Count!=3||state.Candidates.Any(c=>!c.Ready||!File.Exists(c.ProjectPath)||!preferences.Allows(c)||!feedback.Allows(c)));
                 if(repairCurrent)await PrepareBatch(due,preferences,feedback,true).ConfigureAwait(false);
+                if(due!=target)await RecoverThumbnailsAsync(due,true).ConfigureAwait(false);
+                await RecoverThumbnailsAsync(target,false).ConfigureAwait(false);
                 lock(sync)
                 {
                     var existing=ForBatch(target);
@@ -115,6 +124,7 @@ namespace DailyWallpaperPicker
         public async Task RetryAsync()
         {
             nextTry=DateTime.MinValue;
+            ResetThumbnailRetry();
             await TickAsync();
         }
         void PromoteIfDue()

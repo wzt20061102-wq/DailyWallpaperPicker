@@ -476,9 +476,19 @@ namespace DailyWallpaperPicker
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(p)));
             string t=p+"."+Guid.NewGuid().ToString("N")+".tmp";
-            File.WriteAllText(t,Encode(v),new UTF8Encoding(false));
-            if(File.Exists(p))File.Replace(t,p,p+".previous");
-            else File.Move(t,p);
+            try
+            {
+                File.WriteAllText(t,Encode(v),new UTF8Encoding(false));
+                if(File.Exists(p))File.Replace(t,p,p+".previous");
+                else File.Move(t,p);
+            }
+            finally
+            {
+                // Only this invocation owns this temporary file. Preserve the
+                // original write error if cleanup is also denied by the OS.
+                try { if(File.Exists(t))File.Delete(t); }
+                catch { }
+            }
         }
     }
     public static class Schedule

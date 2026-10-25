@@ -7,6 +7,9 @@
     <RootNamespace>DailyWallpaperPicker</RootNamespace>
   </PropertyGroup>
   <Import Project="..\..\build\Common.props" />
-  <ItemGroup><Compile Include="..\..\src\WallpaperReadback.cs"><Link>WallpaperReadback.cs</Link></Compile></ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\WallpaperReadback.cs"><Link>WallpaperReadback.cs</Link></Compile>
+    <Compile Include="..\..\src\PreviewGuardHost.cs"><Link>PreviewGuardHost.cs</Link></Compile>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

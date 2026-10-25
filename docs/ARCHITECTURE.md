@@ -14,10 +14,11 @@
 | `HoverPreviewManager` | 统一 GIF/完整 Video 的悬停归属；视频预热、悬停暂停、播放器和缓存租约释放 |
 | `PickerController` 及职责分文件 | 调度、候选准备、应用、预览、清理的协调 |
 | `FeedbackStore`、`RecommendationSelector` | 明确负反馈持久化与候选排序 |
-| `ThumbnailDownloader` | 有截止时间和容量上限的封面下载 |
+| `ThumbnailDownloader`、`PickerController.Thumbnails` | 有截止时间和容量上限的封面下载、内容校验、独立于完整壁纸的补图与退避 |
 | `HoverPreviewVerifier`、`HoverPreviewLease` | 校验缓存复用及预览期间的资源保护 |
 | `SteamClient`、`ProcessRunner` | 工作进程协议、超时、取消、子进程归属 |
 | `CacheStore`、`WallpaperBridge` | 自有缓存校验与边界、Wallpaper Engine 独立预览与读回 |
+| `PendingPreviewWindows`、`PreviewGuardHost` | 每次独立预览的唯一身份与短期退出清理；守卫由现有读回辅助程序承载 |
 | `StateMigration`、`Models` | 数据格式版本、业务状态和兼容迁移 |
 | `DiagnosticsRetention` | 日志与工作进程辅助文件的有限保留 |
 | `SteamWorker`、`WallpaperReadback` | 两个独立 x64 辅助程序 |
@@ -33,8 +34,13 @@
 - 锁只保护状态和短写入，避免在状态锁内等待网络或长任务。
 - 页面根据 `MessageSeverity` 和 `DownloadStage` 呈现状态，不依赖提示文字。
 - `state.json` 的结构变更必须增加迁移规则；未来版本的状态不得静默降级覆盖。
-- 进程统一经过 `Processes`，测试可在启动边界拒绝意外外部调用。取消只结束本工具创建的子进程，不结束 Steam 或正在运行的 Wallpaper Engine。
+- 普通外部调用统一经过 `Processes`，同一截止时间覆盖退出和输出读取，测试可在启动边界拒绝意外外部调用。取消只结束本工具创建的子进程，不结束 Steam 或正在运行的 Wallpaper Engine。
+- 预览守卫在发送打开请求前完成握手，经过相同测试启动边界，但独立于主进程退出清理。它仅跟踪唯一预览标题及捕获的引擎路径、PID、启动时间，绝不发送无目标的关闭命令。取消后最多监控 120 秒；正常预览不受此时限影响。命令行单次成功预览显式移交给守卫，保留退出后预览的原有行为。
 - 只清理工具缓存；活跃预览、当前桌面、下载作业均受到保护。
+- 清理和导入拒绝缓存根及祖先目录链接。导入只复用有效的既有缓存，绝不覆盖损坏或缺清单的目录；损坏项必须先可靠读回当前壁纸并确认未使用，才可隔离重下。
+- 提醒标记保存失败必须恢复内存值，允许下次检查补提醒；单实例标识基于去除非根尾分隔符的规范化目录。
+- 封面发布和复用前必须解码校验，完整壁纸 Ready 不阻止补图。失败退避 5 分钟，显式重试清除退避；卡片读取失败保留重试能力，2 秒内去重。异步结果仍绑定日期、作品和加载代次。
+- JSON 原子替换失败只清理当前调用创建的临时文件，保留原记录、上一份成功记录以及不属于本次调用的文件。
 - 成功作业立即清理辅助 JSON；失败作业最多保留 30 组、7 天。运行日志超过 4 MB 轮转，最多留 5 份历史日志、14 天。
 
 ## 封面解码边界
@@ -50,5 +56,7 @@
 使用解决方案查看各工程，以 `scripts/Build.ps1`、`scripts/Test.ps1` 和 `scripts/Package.ps1` 作为统一入口。发布从冻结的源码副本构建、测试和打包，安装同一份 ZIP 内的程序，避免本机另编一版。
 
 测试应通过可替换时钟、工作进程委托、壁纸接口以及进程启动边界验证可观察行为。已有少数缓存保护测试保留内部实现检查；增加用例时优先验证输出、落盘状态和调用记录。
+
+预览守卫使用的指定窗口关闭语法见 [Wallpaper Engine 官方命令说明](https://help.wallpaperengine.io/en/functionality/cli.html#remove-wallpaper)。文档未保证该命令能取消尚未创建窗口的加载请求，因此仍需守卫观察；不得将指定关闭请求视作已经确认队列取消。
 
 离线测试与实际 Steam 下载、媒体解码和 Windows 登录恢复是不同证据。发布说明需分别记录，不把离线通过当作所有电脑均已验收。

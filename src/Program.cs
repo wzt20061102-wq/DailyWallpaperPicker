@@ -49,8 +49,7 @@ namespace DailyWallpaperPicker
                         return 0;
                     }
                     bool created;
-                    string unique=CacheStore.HashString(Path.GetFullPath(data).ToLowerInvariant());
-                    using(var mutex=new Mutex(true,"Local\\DailyWallpaperPicker-"+unique,out created))
+                    using(var mutex=new Mutex(true,ProfilePaths.InstanceMutexName(data),out created))
                     {
                         if(!created)
                         {
@@ -79,6 +78,7 @@ namespace DailyWallpaperPicker
                             string id=Get(args,"--preview","");
                             controller.PreviewAsync(id).GetAwaiter().GetResult();
                             Json.Write(Path.Combine(data,"preview-result.json"),controller.State);
+                            controller.KeepPreviewOnExit();
                             return 0;
                         }
                         var version=(AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(typeof(Program).Assembly,typeof(AssemblyInformationalVersionAttribute));
