@@ -83,6 +83,11 @@ namespace DailyWallpaperPicker
                         }
                         var version=(AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(typeof(Program).Assembly,typeof(AssemblyInformationalVersionAttribute));
                         LogLifecycle(controller,"START pid="+System.Diagnostics.Process.GetCurrentProcess().Id+" mode="+(args.Contains("--scheduled")?"scheduled":"manual")+" version="+(version==null?"unknown":version.InformationalVersion));
+                        if(controller.UseSoftwareRendering)
+                        {
+                            System.Windows.Media.RenderOptions.ProcessRenderMode=System.Windows.Interop.RenderMode.SoftwareOnly;
+                            LogLifecycle(controller,"UI RENDER software (profile setting)");
+                        }
                         var app=new Application
                         {
                             ShutdownMode=ShutdownMode.OnExplicitShutdown

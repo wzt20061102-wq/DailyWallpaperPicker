@@ -61,6 +61,7 @@ namespace DailyWallpaperPicker
                 return data;
             }
         }
+        internal bool UseSoftwareRendering { get { return config.UseSoftwareRendering; } }
         DateTime UtcNow
         {
             get

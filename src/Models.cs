@@ -236,6 +236,9 @@ namespace DailyWallpaperPicker
     }
     public class PickerConfig
     {
+        // Per-profile fallback for machines whose WPF hardware compositor is blank.
+        // False keeps the platform default; this never changes Windows graphics settings.
+        public bool UseSoftwareRendering { get; set; }
         public string SteamBin
         {
             get;
