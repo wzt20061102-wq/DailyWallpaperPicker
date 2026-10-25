@@ -30,11 +30,12 @@ namespace DailyWallpaperPicker
         bool CanRestoreFocus(IInputElement focused, IInputElement original);
     }
     /// <summary>A single candidate card, with explicit commands and typed status rendering.</summary>
-    internal sealed class CardView
+    internal sealed class CardView : IDisposable
     {
         private readonly ICardActions _owner;
         private readonly int _index;
         private readonly Image _image;
+        private readonly AnimatedCoverPlayer _coverPlayer;
         private readonly Grid _previewPanel;
         private readonly Grid _imagePlaceholder;
         private readonly TextBlock _placeholderText;
@@ -49,6 +50,8 @@ namespace DailyWallpaperPicker
         private bool _dislikeRunning;
         private string _itemId;
         private string _loadedImagePath;
+        private int _coverGeneration;
+        private bool _disposed;
         private string _projectPath;
         private bool _hoverReady;
         private bool _knownSceneOnly;
@@ -60,6 +63,10 @@ namespace DailyWallpaperPicker
         public bool IsKnownVideoOnly { get { return _knownVideoOnly; } }
         public bool CanPrepare { get { return _hoverReady && !String.IsNullOrEmpty(_itemId); } }
         public bool CanHover { get { return CanPrepare && _previewPanel.IsMouseOver; } }
+        public bool HasAnimatedCover { get { return _coverPlayer.CanPlay; } }
+        public bool CoverPlaying { get { return _coverPlayer.IsPlaying; } }
+        public void PlayCover() { _coverPlayer.Play(); }
+        public void StopCover() { _coverPlayer.Stop(); }
 
         public CardView(ICardActions owner, int index)
         {
@@ -88,6 +95,7 @@ namespace DailyWallpaperPicker
                 previewPanel.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, previewPanel.ActualWidth), Math.Max(0, previewPanel.ActualHeight)), 12, 12);
             };
             _image = new Image { Stretch = Stretch.UniformToFill, SnapsToDevicePixels = true };
+            _coverPlayer = new AnimatedCoverPlayer(_image, SetHoverState);
             AutomationProperties.SetAutomationId(_image, "Candidate" + (index + 1).ToString(CultureInfo.InvariantCulture) + "Cover");
             SetHoverState("static");
             RenderOptions.SetBitmapScalingMode(_image, BitmapScalingMode.HighQuality);
@@ -277,31 +285,48 @@ namespace DailyWallpaperPicker
             AutomationProperties.SetHelpText(_previewPanel, text ?? String.Empty);
         }
 
-        private void LoadImage(string path)
+        private async void LoadImage(string path)
         {
-            if (String.Equals(path, _loadedImagePath, StringComparison.OrdinalIgnoreCase) && _image.Source != null) return;
-            _loadedImagePath = path;
-            _image.Source = null;
+            string key = (_itemId ?? "") + "|" + (path ?? "");
+            try
+            {
+                if (!String.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    var info = new FileInfo(path);
+                    key = (_itemId ?? "") + "|" + Path.GetFullPath(path) + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            if (String.Equals(key, _loadedImagePath, StringComparison.OrdinalIgnoreCase)) return;
+            _loadedImagePath = key;
+            int generation = ++_coverGeneration;
+            _owner.EndHover(this, "cover-reloading");
+            _coverPlayer.SetAnimation(null);
             _imagePlaceholder.Visibility = Visibility.Visible;
             _placeholderText.Text = String.IsNullOrEmpty(_itemId) ? "等待候选" : "封面加载中";
             if (String.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
             try
             {
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-                bitmap.DecodePixelWidth = 640;
-                bitmap.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
-                bitmap.EndInit();
-                bitmap.Freeze();
-                _image.Source = bitmap;
+                var cover = await Task.Run(() => CoverAnimation.Load(path));
+                if (_disposed || _owner.IsDisposed || generation != _coverGeneration) return;
+                _coverPlayer.SetAnimation(cover);
                 _imagePlaceholder.Visibility = Visibility.Collapsed;
+                if (CanHover) _owner.BeginHover(this);
             }
             catch (Exception)
             {
+                if (_disposed || _owner.IsDisposed || generation != _coverGeneration) return;
                 _placeholderText.Text = "封面暂不可用";
             }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _coverGeneration++;
+            _coverPlayer.Dispose();
         }
 
         private static string PoolName(string value, int index)

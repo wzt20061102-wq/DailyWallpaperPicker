@@ -130,9 +130,19 @@ namespace DailyWallpaperPicker
                 if (!IsPreparedCurrent(prepared) || !_controller.IsHoverPreviewCurrent(pendingLease)) return;
                 if (!pendingLease.IsVideo)
                 {
+                    bool hovered = Object.ReferenceEquals(_hoverCard, card) && CanContinueHover(card);
                     HoverLog("fallback id=" + prepared.ItemId + " type=Scene reason=independent-preview-required");
                     ClosePreparedVideo(prepared, "scene-fallback");
-                    card.SetHoverState("static; scene-fallback");
+                    if (hovered && card.HasAnimatedCover)
+                    {
+                        _hoverCard = card;
+                        _hoverClock = Stopwatch.StartNew();
+                        _controller.HidePreview();
+                        card.PlayCover();
+                        HoverLog("cover-resume id=" + card.ItemId + " source=author-animated-cover");
+                        AdjustHoverWatch();
+                    }
+                    else card.SetHoverState("static; scene-fallback");
                     card.SetHoverTip("Scene 场景请点击「预览」查看动态效果。");
                     return;
                 }
@@ -206,6 +216,16 @@ namespace DailyWallpaperPicker
             _suppressPreparation = false;
             var clock = Stopwatch.StartNew();
             StopHover("another-card");
+            if (card.IsKnownSceneOnly && card.HasAnimatedCover)
+            {
+                _hoverCard = card;
+                _hoverClock = clock;
+                _controller.HidePreview();
+                card.PlayCover();
+                HoverLog("cover-resume id=" + card.ItemId + " source=author-animated-cover hoverToPlayMs=" + clock.ElapsedMilliseconds);
+                AdjustHoverWatch();
+                return;
+            }
             if (card.IsKnownSceneOnly)
             {
                 HoverLog("fallback id=" + card.ItemId + " type=Scene reason=known-scene-static-cover");
@@ -274,6 +294,11 @@ namespace DailyWallpaperPicker
             CardView card = _hoverCard;
             _hoverCard = null;
             _hoverClock = null;
+            if (card != null && card.CoverPlaying)
+            {
+                card.StopCover();
+                HoverLog("cover-stop id=" + card.ItemId + " reason=" + reason + " state=poster");
+            }
             PreparedVideo prepared;
             if (card != null && _preparedVideos.TryGetValue(card, out prepared)) PausePreparedVideo(prepared, reason);
             AdjustHoverWatch();
@@ -389,7 +414,7 @@ namespace DailyWallpaperPicker
 
         private void AdjustHoverWatch()
         {
-            if (_preparedVideos.Count == 0) { _hoverWatch.Stop(); return; }
+            if (_preparedVideos.Count == 0 && _hoverCard == null) { _hoverWatch.Stop(); return; }
             int interval = 500;
             foreach (PreparedVideo prepared in _preparedVideos.Values)
             {
@@ -447,6 +472,7 @@ namespace DailyWallpaperPicker
 
         public void ClosePreparedVideos(string reason)
         {
+            foreach (var card in _cards) if (card != null) card.StopCover();
             _hoverCard = null;
             _hoverClock = null;
             foreach (PreparedVideo prepared in new List<PreparedVideo>(_preparedVideos.Values)) ClosePreparedVideo(prepared, reason);

@@ -283,6 +283,7 @@ namespace DailyWallpaperPicker
             _disposed = true;
             _controller.Changed -= ControllerChanged;
             _hover.Dispose();
+            foreach (var card in _cards) if (card != null) card.Dispose();
             _tray.Dispose();
         }
 

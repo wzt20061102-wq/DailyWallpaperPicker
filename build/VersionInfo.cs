@@ -5,5 +5,5 @@ using System.Reflection;
 [assembly: AssemblyProduct("DailyWallpaperPicker")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 wzt20061102-wq")]
 [assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.3")]
-[assembly: AssemblyInformationalVersion("0.1.0-preview.3")]
+[assembly: AssemblyFileVersion("0.1.0.4")]
+[assembly: AssemblyInformationalVersion("0.1.0-preview.4")]

@@ -272,6 +272,7 @@ namespace DailyWallpaperPicker
             RecommendationFeedbackTests(results, fixtureRoot);
             DislikeControllerTests(results, fixtureRoot);
             MaintenanceTests(results, fixtureRoot);
+            CoverHoverTests(results, fixtureRoot);
 
             Check(results, "readback_scene_package_equivalence_is_directory_and_type_scoped", delegate
             {

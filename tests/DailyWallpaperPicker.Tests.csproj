@@ -9,6 +9,10 @@
   <Import Project="..\build\Common.props" />
   <ItemGroup>
     <Compile Include="**\*.cs" Exclude="obj\**\*" />
+    <Reference Include="System.Xaml"><HintPath>$(FrameworkRuntimeDirectory)\System.Xaml.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(FrameworkRuntimeDirectory)\WPF\PresentationCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationFramework"><HintPath>$(FrameworkRuntimeDirectory)\WPF\PresentationFramework.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(FrameworkRuntimeDirectory)\WPF\WindowsBase.dll</HintPath><Private>false</Private></Reference>
     <ProjectReference Include="..\src\DailyWallpaperPicker.csproj"><Project>{8FD395DE-2D77-47CF-B326-D6A157389F88}</Project><Name>DailyWallpaperPicker</Name></ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
