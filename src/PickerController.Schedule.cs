@@ -82,6 +82,26 @@ namespace DailyWallpaperPicker
                 }
                 await PrepareBatch(target,preferences,feedback,false).ConfigureAwait(false);
             }
+            catch(PreparationSupersededException)
+            {
+                // Date or pause changed while Steam was connecting. A later tick owns the new work.
+                nextTry=DateTime.MinValue;
+            }
+            catch(SteamPreparationWaitingException ex)
+            {
+                lock(sync)
+                {
+                    if(target==Schedule.Prepare(UtcNow)&&!state.Paused)
+                    {
+                        bool changed=state.Message!=ex.Message||state.MessageSeverity!=MessageSeverity.Info;
+                        state.MessageSeverity=MessageSeverity.Info;
+                        state.Message=ex.Message;
+                        if(changed)Save();
+                    }
+                }
+                nextTry=UtcNow.Add(ex.RetryAfter);
+                Notify();
+            }
             catch(OperationCanceledException)
             {
                 if(!cancellation.IsCancellationRequested)throw;
@@ -167,7 +187,7 @@ namespace DailyWallpaperPicker
         bool IsPreparationCurrent(string batch,bool currentBatch=false)
         {
             cancellation.ThrowIfCancellationRequested();
-            lock(sync)return currentBatch?batch==state.BatchId&&batch==Schedule.Due(UtcNow):!state.Paused&&batch==Schedule.Prepare(UtcNow);
+            lock(sync)return !state.Paused&&(currentBatch?batch==state.BatchId&&batch==Schedule.Due(UtcNow):batch==Schedule.Prepare(UtcNow));
         }
         void Update(string batch,string id,Action<Candidate> change)
         {

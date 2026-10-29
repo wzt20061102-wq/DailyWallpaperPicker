@@ -29,6 +29,7 @@ namespace DailyWallpaperPicker
         readonly WallpaperBridge wallpaper;
         readonly Func<DateTime> clock;
         readonly Func<string,object,Action<WorkerProgress>,Task<WorkerReply>> callSteam;
+        readonly Func<string,Task<SteamReadiness>> checkSteamReadiness;
         bool disliking;
         AppState state;
         bool preparing;
@@ -82,6 +83,10 @@ namespace DailyWallpaperPicker
         {
         }
         internal PickerController(string dataDirectory,Func<DateTime> utcClock,Func<string,object,Action<WorkerProgress>,Task<WorkerReply>> workerCall,CancellationToken cancellation,WallpaperBridge wallpaperBridge)
+            :this(dataDirectory,utcClock,workerCall,cancellation,wallpaperBridge,null)
+        {
+        }
+        internal PickerController(string dataDirectory,Func<DateTime> utcClock,Func<string,object,Action<WorkerProgress>,Task<WorkerReply>> workerCall,CancellationToken cancellation,WallpaperBridge wallpaperBridge,Func<string,Task<SteamReadiness>> readinessCheck)
         {
             this.cancellation=cancellation;
             if(utcClock==null)throw new ArgumentNullException("utcClock");
@@ -105,6 +110,11 @@ namespace DailyWallpaperPicker
             if(state.PreparedBatchId==state.BatchId&&state.Candidates.Count==3)state.PreparedCandidates=state.Candidates;
             steam=new SteamClient(config,data,cancellation);
             callSteam=workerCall??steam.Call;
+            // An injected worker is a complete offline boundary. Lifecycle tests inject
+            // readiness separately; ordinary worker fixtures must never launch real Steam.
+            if(readinessCheck!=null)checkSteamReadiness=readinessCheck;
+            else if(workerCall!=null)checkSteamReadiness=batch=>Task.FromResult(new SteamReadiness { Online=true });
+            else checkSteamReadiness=new SteamSession(config,steam,clock,cancellation,LogSafely).EnsureOnlineAsync;
             wallpaper=wallpaperBridge??new WallpaperBridge(config.WallpaperExe,Log,cancellation);
         }
         void Save()

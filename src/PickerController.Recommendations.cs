@@ -18,7 +18,7 @@ namespace DailyWallpaperPicker
 {
     public partial class PickerController
     {
-        async Task ImportSeeds()
+        async Task ImportSeeds(string batch,bool currentBatch)
         {
             lock(sync)if(state.SeedImported)return;
             string p=Path.Combine(Path.GetDirectoryName(config.WallpaperExe),"config.json");
@@ -35,10 +35,11 @@ namespace DailyWallpaperPicker
             string[] ids=Regex.Matches(selected,@"431960[/\\]+(\d+)").Cast<Match>().Select(x=>x.Groups[1].Value).Distinct().Take(20).ToArray();
             if(ids.Length>0)
             {
-                var r=await callSteam("query",new
+                var r=await CallPreparationSteamAsync(batch,currentBatch,"query",new
                 {
                     ids=ids,pool="popular",limit=50
                 },null).ConfigureAwait(false);
+                if(!IsPreparationCurrent(batch,currentBatch))throw new PreparationSupersededException();
                 lock(sync)
                 {
                     foreach(var item in r.items??new List<Candidate>())foreach(string tag in RecommendationSelector.RelevantTags(item.Tags))
@@ -79,7 +80,7 @@ namespace DailyWallpaperPicker
         async Task PrepareBatch(string batch, RecommendationPreferences preferences, RecommendationFeedback feedback, bool currentBatch)
         {
             if (!IsPreparationCurrent(batch, currentBatch)) return;
-            await ImportSeeds().ConfigureAwait(false);
+            await ImportSeeds(batch,currentBatch).ConfigureAwait(false);
             if (!IsPreparationCurrent(batch, currentBatch)) return;
             List<Candidate> items;
             lock (sync)
@@ -106,7 +107,7 @@ namespace DailyWallpaperPicker
                     var eligible = new List<Candidate>();
                     for (int page = 1; page <= 10 && eligible.Count == 0; page++)
                     {
-                        var reply = await callSteam("query", new
+                        var reply = await CallPreparationSteamAsync(batch,currentBatch,"query", new
                         {
                             pool = pool, limit = 50, page = page
                         }, null).ConfigureAwait(false);

@@ -92,11 +92,20 @@ namespace DailyWallpaperPicker
                 Require(SpinWait.SpinUntil(() => ProcessHasExited(ownerPid), 10000), "Owner process did not exit.");
                 long ownerExitedAt = watch.ElapsedMilliseconds;
                 var result = ownerTask.GetAwaiter().GetResult();
-                Json.Write(Path.Combine(root, "owner-observation.json"), new { actualOwnerExitedMilliseconds = ownerExitedAt, runnerReturnedMilliseconds = watch.ElapsedMilliseconds });
+                long runnerReturnedAt = watch.ElapsedMilliseconds;
+                Json.Write(Path.Combine(root, "owner-observation.json"), new { actualOwnerExitedMilliseconds = ownerExitedAt, runnerReturnedMilliseconds = runnerReturnedAt });
                 Require(result.ExitCode == 0, "Fixture owner failed: " + result.Error);
                 enginePid = Int32.Parse(File.ReadAllText(Path.Combine(root, "engine.pid")));
                 guardPid = Int32.Parse(File.ReadAllText(Path.Combine(root, "guard.pid")));
-                Require(watch.ElapsedMilliseconds < 7000, "Owner waited for the delayed preview while shutting down.");
+                var ownerTiming = Json.Read<Dictionary<string, object>>(Path.Combine(root, "owner-timing.json"));
+                long armedAt = Convert.ToInt64(ownerTiming["armedMilliseconds"]);
+                long drainFinishedAt = Convert.ToInt64(ownerTiming["drainAndDetachFinishedMilliseconds"]);
+                long shutdownDuration = drainFinishedAt - armedAt;
+                long returnAfterExit = runnerReturnedAt - ownerExitedAt;
+                // Process/CLR startup and guard readiness are not shutdown work. Measure
+                // the actual drain and the runner's pipe completion after owner exit.
+                Require(shutdownDuration >= 0 && shutdownDuration < 2000, "Owner waited for the delayed preview while shutting down.");
+                Require(returnAfterExit >= 0 && returnAfterExit < 2000, "Runner waited for inherited pipes after the owner exited.");
                 string finished = Path.Combine(root, "window-result.json");
                 Require(SpinWait.SpinUntil(() => File.Exists(finished), 18000), "Delayed window fixture did not finish.");
                 var state = Json.Read<Dictionary<string, object>>(finished);
@@ -104,7 +113,10 @@ namespace DailyWallpaperPicker
                 Require(closed == (mode != "detach"), "Guard failed to close a canceled window, or closed a deliberate headless preview.");
                 Require(ProcessPreviewFixtures.WindowExists(unrelated), "Guard closed the same-title window from another executable/PID.");
                 Require(SpinWait.SpinUntil(() => ProcessHasExited(guardPid), 5000), "Guard did not exit after its owned window/engine closed.");
-                return new { mode = mode, delayedMilliseconds = delay, closedByGuard = closed, unrelatedSameTitlePreserved = true, helperExited = true, realEngineUsed = false };
+                return new { mode = mode, delayedMilliseconds = delay, closedByGuard = closed, unrelatedSameTitlePreserved = true,
+                    helperExited = true, realEngineUsed = false, armedMilliseconds = armedAt,
+                    shutdownMilliseconds = shutdownDuration, ownerExitedMilliseconds = ownerExitedAt,
+                    runnerReturnedMilliseconds = runnerReturnedAt, returnAfterOwnerExitMilliseconds = returnAfterExit };
             }
             finally
             {

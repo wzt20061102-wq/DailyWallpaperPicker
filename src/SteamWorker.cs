@@ -53,14 +53,14 @@ internal static class SteamWorker
         Request request = null;
         try
         {
-            if (args.Length != 5 || (args[0] != "query" && args[0] != "download") || args[1] != "--request" || args[3] != "--response")
-                throw new ArgumentException("Usage: SteamWorker.exe query|download --request <json> --response <json>");
+            if (args.Length != 5 || (args[0] != "query" && args[0] != "download" && args[0] != "status") || args[1] != "--request" || args[3] != "--response")
+                throw new ArgumentException("Usage: SteamWorker.exe query|download|status --request <json> --response <json>");
             string requestPath = Path.GetFullPath(args[2]);
             responsePath = Path.GetFullPath(args[4]);
             request = Json.Deserialize<Request>(File.ReadAllText(requestPath, Encoding.UTF8));
             if (request == null || request.appId != AppId) throw new ArgumentException("appId must be 431960.");
             Initialize(request.steamBin);
-            object response = args[0] == "query" ? Query(request) : Download(request);
+            object response = args[0] == "status" ? Status() : args[0] == "query" ? Query(request) : Download(request);
             AtomicJson(responsePath, response);
             Dictionary<string, object> responseFields = Json.Deserialize<Dictionary<string, object>>(Json.Serialize(response));
             bool responseOk = responseFields.ContainsKey("ok") && Object.Equals(responseFields["ok"], true);
@@ -74,7 +74,9 @@ internal static class SteamWorker
                 try
                 {
                     string error = ex.GetType().Name + ": " + ex.Message;
-                    if (args.Length > 0 && args[0] == "download")
+                    if (args.Length > 0 && args[0] == "status")
+                        AtomicJson(responsePath, new { ok = false, error = error, loggedOn = (bool?)null, appId = AppId });
+                    else if (args.Length > 0 && args[0] == "download")
                         AtomicJson(responsePath, new { ok = false, error = error, id = request == null ? null : request.id,
                             installPath = (string)null, bytes = 0L, subscribedBefore = (bool?)null, subscribedAfter = (bool?)null, appId = AppId });
                     else AtomicJson(responsePath, new { ok = false, error = error, items = new Item[0], appId = AppId });
@@ -118,6 +120,15 @@ internal static class SteamWorker
             Marshal.SizeOf(typeof(DownloadResult)) != 24 || Marshal.SizeOf(typeof(CallbackMsg)) != 24 || Marshal.SizeOf(typeof(ApiCompleted)) != 16)
             throw new InvalidOperationException("Steamworks x64 ABI size validation failed.");
         Native.SteamAPI_ManualDispatch_Init();
+    }
+
+    private static object Status()
+    {
+        IntPtr user = Native.SteamAPI_SteamUser_v023();
+        if (user == IntPtr.Zero) throw new InvalidOperationException("SteamUser_v023 is unavailable.");
+        // BLoggedOn reports a live Steam-server connection, not merely a running client.
+        // No account identifiers, authentication tokens, queries or downloads are involved.
+        return new { ok = true, appId = AppId, loggedOn = Native.SteamAPI_ISteamUser_BLoggedOn(user) };
     }
 
     private static object Query(Request request)
@@ -356,6 +367,8 @@ internal static class SteamWorker
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void SteamAPI_Shutdown();
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr SteamAPI_SteamUGC_v020();
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr SteamAPI_SteamUtils_v010();
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr SteamAPI_SteamUser_v023();
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.I1)] internal static extern bool SteamAPI_ISteamUser_BLoggedOn(IntPtr self);
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern uint SteamAPI_ISteamUtils_GetAppID(IntPtr self);
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int SteamAPI_GetHSteamPipe();
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void SteamAPI_ManualDispatch_Init();

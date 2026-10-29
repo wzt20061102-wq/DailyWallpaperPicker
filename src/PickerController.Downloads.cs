@@ -20,6 +20,7 @@ namespace DailyWallpaperPicker
     {
         async Task DownloadCandidatesAsync(List<Candidate> items,string batch,bool currentBatch)
         {
+            SteamPreparationWaitingException connectionWait=null;
             foreach(var c in items)
             {
                 if(!IsPreparationCurrent(batch,currentBatch))return;
@@ -53,6 +54,9 @@ namespace DailyWallpaperPicker
                     }
                     if(project==null)
                     {
+                        // Finish restoring later local copies even when a prior
+                        // card needs Steam. One connection probe per pass is enough.
+                        if(connectionWait!=null)throw connectionWait;
                         Update(batch,c.Id,x=>
                         {
                             x.Ready=false;
@@ -60,7 +64,7 @@ namespace DailyWallpaperPicker
                             x.Status="正在下载完整壁纸";
                             x.Error=null;
                         });
-                        var reply=await callSteam("download",new
+                        var reply=await CallPreparationSteamAsync(batch,currentBatch,"download",new
                         {
                             id=c.Id
                         },p=>Update(batch,c.Id,x=>
@@ -96,6 +100,17 @@ namespace DailyWallpaperPicker
                 {
                     throw;
                 }
+                catch(SteamPreparationWaitingException ex)
+                {
+                    Update(batch,c.Id,x=>
+                    {
+                        x.Stage=DownloadStage.Pending;
+                        x.Status="等待 Steam 连接";
+                        x.Error=null;
+                    });
+                    connectionWait=ex;
+                }
+                catch(PreparationSupersededException) { throw; }
                 catch(Exception ex)
                 {
                     Update(batch,c.Id,x=>
@@ -109,6 +124,7 @@ namespace DailyWallpaperPicker
                 }
             }
             if(!IsPreparationCurrent(batch,currentBatch))return;
+            if(connectionWait!=null)throw connectionWait;
             lock(sync)
             {
                 PromoteIfDue();

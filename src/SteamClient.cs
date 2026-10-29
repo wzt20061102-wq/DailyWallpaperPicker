@@ -18,6 +18,7 @@ namespace DailyWallpaperPicker
         public string id { get; set; }
         public string installPath { get; set; }
         public int? appId { get; set; }
+        public bool? loggedOn { get; set; }
         public bool? subscribedBefore { get; set; }
         public bool? subscribedAfter { get; set; }
     }
@@ -68,7 +69,7 @@ namespace DailyWallpaperPicker
                     payload["progressFile"] = progressFile;
                     Json.Write(request, payload);
                     task = Processes.Run(exe, verb + " --request " + Processes.Quote(request) + " --response " + Processes.Quote(response),
-                        config.SteamBin, verb == "download" ? 1200 : 180, callLifetime.Token);
+                        config.SteamBin, verb == "download" ? 1200 : verb == "status" ? 10 : 180, callLifetime.Token);
                     while (!task.IsCompleted)
                     {
                         await Task.WhenAny(task, Task.Delay(1000)).ConfigureAwait(false);

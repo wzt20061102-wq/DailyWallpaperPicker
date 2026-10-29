@@ -277,6 +277,8 @@ namespace DailyWallpaperPicker
             PersistenceRegressionTests(results, fixtureRoot);
             CacheSafetyRegressionTests(results, fixtureRoot);
             CoverRecoveryRegressionTests(results, fixtureRoot);
+            SteamSessionRegressionTests(results, fixtureRoot);
+            SteamPreparationRegressionTests(results, fixtureRoot);
 
             Check(results, "readback_scene_package_equivalence_is_directory_and_type_scoped", delegate
             {

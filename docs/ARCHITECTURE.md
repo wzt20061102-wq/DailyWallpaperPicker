@@ -17,6 +17,7 @@
 | `ThumbnailDownloader`、`PickerController.Thumbnails` | 有截止时间和容量上限的封面下载、内容校验、独立于完整壁纸的补图与退避 |
 | `HoverPreviewVerifier`、`HoverPreviewLease` | 校验缓存复用及预览期间的资源保护 |
 | `SteamClient`、`ProcessRunner` | 工作进程协议、超时、取消、子进程归属 |
+| `SteamSession`、`PickerController.Steam` | 当前会话 Steam 的限频启动和短状态探针；按批次取消过期准备，连接后自动继续 |
 | `CacheStore`、`WallpaperBridge` | 自有缓存校验与边界、Wallpaper Engine 独立预览与读回 |
 | `PendingPreviewWindows`、`PreviewGuardHost` | 每次独立预览的唯一身份与短期退出清理；守卫由现有读回辅助程序承载 |
 | `StateMigration`、`Models` | 数据格式版本、业务状态和兼容迁移 |
@@ -35,6 +36,8 @@
 - 页面根据 `MessageSeverity` 和 `DownloadStage` 呈现状态，不依赖提示文字。
 - `state.json` 的结构变更必须增加迁移规则；未来版本的状态不得静默降级覆盖。
 - 普通外部调用统一经过 `Processes`，同一截止时间覆盖退出和输出读取，测试可在启动边界拒绝意外外部调用。取消只结束本工具创建的子进程，不结束 Steam 或正在运行的 Wallpaper Engine。
+- Steam 在真正需要查询/下载前才检查就绪；完整缓存和本地缓存恢复不需要网络。`status` 最长 10 秒，只读取当前 Steamworks 会话的 `BLoggedOn`，不将进程存在或 API 初始化成功当作联网。探针返回后重新检查推荐日期及暂停状态。
+- Steam 客户端以独立的静默进程启动，经过测试启动守卫，但不加入 `Processes.Children`，退出小工具不能结束 Steam。只认当前会话中经过核对的客户端；未知进程身份按等待处理，避免重复打开。离线检查与普通工坊业务错误分别退避。
 - 预览守卫在发送打开请求前完成握手，经过相同测试启动边界，但独立于主进程退出清理。它仅跟踪唯一预览标题及捕获的引擎路径、PID、启动时间，绝不发送无目标的关闭命令。取消后最多监控 120 秒；正常预览不受此时限影响。命令行单次成功预览显式移交给守卫，保留退出后预览的原有行为。
 - 只清理工具缓存；活跃预览、当前桌面、下载作业均受到保护。
 - 清理和导入拒绝缓存根及祖先目录链接。导入只复用有效的既有缓存，绝不覆盖损坏或缺清单的目录；损坏项必须先可靠读回当前壁纸并确认未使用，才可隔离重下。
